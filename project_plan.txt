@@ -1,0 +1,170 @@
+# Local Desktop AI Assistant Project Plan
+
+## 1. System Reality Check
+
+**Findings:**
+- OS: Windows 11 Pro 10.0.26200
+- CPU: 12th Gen Intel Core i7-12700H
+- RAM: 32GB (2x16GB modules detected)
+- GPU: NVIDIA GeForce RTX 3070 Ti Laptop GPU (4GB VRAM), Intel Iris Xe (1GB VRAM)
+- Disk: C: 493GB free/988GB total, D: 986GB free/1TB total
+- Python: 3.13.0
+- Git: 2.53.0
+- Ollama: Not installed or not in PATH
+- No local LLM runtimes (llama.cpp, transformers, onnxruntime, etc.) detected
+- No desktop UI frameworks (PyQt, PySide, Tkinter, wxPython, etc.) detected
+
+**What this machine can run well:**
+- 7B-13B LLMs with quantization (q4/q5/q8) on GPU or CPU
+- Coding/Reasoning models in the 7B-13B range
+- Vision models up to 7B (if RAM/VRAM allows)
+- Multiple models with lazy loading
+
+**What it can run poorly:**
+- 34B+ models (VRAM limited, will OOM or be slow)
+- Large vision models (VRAM limited)
+- Flash Attention: Only available if compiled for GPU, not present by default
+- f16 KV/cache: Not realistic for 4GB VRAM, use q8_0 or q4_K_M as default
+
+## 2. Current Plan Teardown
+
+**Solid:**
+- Local-first, desktop focus
+- Coding and reasoning support
+- Model lane separation (reasoning, coding, vision, unfiltered)
+- Hardware-aware defaults
+
+**Weak:**
+- No runtime or UI libraries installed
+- No Ollama or llama.cpp present
+- No model management logic yet
+- No persistent memory layer
+
+**Misleading:**
+- Vision as default: Should be optional, not default
+- Unfiltered lane: Should be lazy-installed, not default
+
+**Missing:**
+- Model install/download logic
+- Model status/inventory logic
+- UI framework selection
+- Local memory implementation
+- Hardware detection at runtime
+
+**Should be cut:**
+- None, but vision/unfiltered lanes should be optional/lazy
+
+**Should be delayed:**
+- Vision lane, advanced model routing, multi-model concurrency
+
+## 3. Revised Master Plan
+
+### MVP
+- Minimal modular desktop UI
+- Ollama as first runtime backend
+- Startup hardware detection
+- Startup Ollama detection
+- Two default model lanes only:
+  - Reasoning
+  - Coding
+- Persistent local memory using JSON first
+- Model inventory / installed status UI
+- Auto-pull for missing default models
+- Rule-based routing first
+- Vision and unfiltered lanes architected now, but lazy-installed later
+
+### Recommended Version
+- Profile-based model routing (reasoning/coding separation)
+- Optional vision lane (install on demand)
+- Unfiltered lane (install on demand, clear warnings)
+- Model download progress UI
+- Hardware-aware model suggestions
+- Modular UI (tabs or panels)
+
+### Later Upgrades
+- Multi-model concurrency
+- Advanced memory (vector DB, semantic search)
+- Plugin/extension system
+- Fine-tuning UI
+- Advanced vision (multi-modal, OCR, etc.)
+
+## 4. Model Strategy
+
+### Reasoning
+- Model: llama3.1:8b
+- Install: default
+- Notes: safe general baseline for local use
+
+### Coding
+- Model: qwen2.5-coder:7b
+- Install: default
+- Notes: modern coding-first lane; better default than CodeLlama 7B
+
+### Vision
+- Model: qwen3-vl
+- Fallback: llava-llama3
+- Install: optional / lazy
+- Notes: enable only when vision is actually used; check Ollama version compatibility first
+
+### Unfiltered
+- Model: dolphin3:8b
+- Install: lazy
+- Notes: separate permissive lane; not default-installed; not just a prompt toggle
+
+### Runtime Defaults
+- Prefer quantized/local-safe defaults
+- Do not default to f16 KV cache
+- Keep context conservative initially
+- Use GPU if available and stable; otherwise CPU fallback
+
+## 5. Project Structure
+
+- project_plan.txt (this file)
+- /app/
+  - main.py
+  - ui/
+    - __init__.py
+    - main_window.py
+    - model_status_panel.py
+  - models/
+    - __init__.py
+    - runtime_client.py
+    - model_registry.py
+    - install_manager.py
+  - memory/
+    - __init__.py
+    - local_memory.py
+  - supervisor/
+    - __init__.py
+    - router.py
+  - config.py
+  - hardware.py
+- /docs/
+  - project_plan.txt (optional symlink/copy)
+
+## 6. Install and Model Management Strategy
+
+- On startup, detect Ollama/llama.cpp presence
+- Detect installed models (Ollama list, or local model dir)
+- If missing, prompt user to install or auto-install (if allowed)
+- Show install/download progress in UI
+- Use hardware detection to suggest safe model sizes
+- Vision/unfiltered lanes: install only on demand
+- Fallback to CPU if GPU not available or VRAM too low
+
+## 7. Exact Next Steps
+
+1. Install Ollama or llama.cpp (required for local LLMs)
+2. Pick and install a desktop UI framework (PyQt, PySide, Tkinter, wxPython, etc.)
+3. Scaffold project structure as above
+4. Implement hardware detection (Python: psutil, GPUtil, etc.)
+5. Implement model runtime client (Ollama/llama.cpp wrapper)
+6. Implement model registry/status logic
+7. Implement minimal UI: chat, model status, install progress
+8. Add persistent local memory (simple file/db)
+9. Add model install/download logic
+10. Add optional vision/unfiltered lanes (lazy install)
+
+## 8. Drift Control Note
+
+This plan is saved as `project_plan.txt` in the project root. Future implementation should follow this file unless intentionally revised.
