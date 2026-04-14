@@ -104,6 +104,44 @@ CONFIG_DATA_HINTS = {
     "yml",
 }
 
+TEST_HINTS = {
+    "spec",
+    "specs",
+    "test",
+    "tests",
+}
+
+DOC_EXAMPLE_DIRS = {
+    "doc",
+    "docs",
+    "example",
+    "examples",
+    "guide",
+    "guides",
+    "sample",
+    "samples",
+    "tutorial",
+    "tutorials",
+}
+
+DOC_EXAMPLE_HINTS = {
+    "all",
+    "doc",
+    "docs",
+    "documentation",
+    "example",
+    "examples",
+    "guide",
+    "guides",
+    "markdown",
+    "readme",
+    "sample",
+    "samples",
+    "tutorial",
+    "tutorials",
+    "usage",
+}
+
 PATH_PATTERN = re.compile(
     rf"\b(?:[A-Za-z]:)?[\w./\\-]+\.({'|'.join(SUPPORTED_FILE_EXTENSIONS)})\b",
     re.IGNORECASE,
@@ -409,11 +447,41 @@ def _path_preference_score(relative_path):
     score = 0
     if lowered.startswith(("app/", "src/")):
         score += 3
+    if _is_doc_or_example_path(relative_path):
+        score -= 2
     if lowered.startswith("tests/") or "/tests/" in lowered:
         score -= 3
     if lowered.endswith(("_test.py", ".spec.js", ".spec.ts", ".test.js", ".test.ts")):
         score -= 2
     return score
+
+
+def _is_test_path(relative_path):
+    lowered = str(relative_path or "").replace("\\", "/").lower()
+    basename = os.path.basename(lowered)
+    if lowered.startswith("tests/") or "/tests/" in lowered:
+        return True
+    if basename.startswith("test_"):
+        return True
+    if basename.endswith(("_test.py", ".spec.js", ".spec.ts", ".test.js", ".test.ts")):
+        return True
+    return False
+
+
+def _is_doc_or_example_path(relative_path):
+    lowered = str(relative_path or "").replace("\\", "/").lower()
+    parts = [part for part in lowered.split("/") if part]
+    basename = os.path.basename(lowered)
+
+    if basename in {"readme", "readme.md", "readme.txt"}:
+        return True
+    if basename.startswith(("example_", "sample_")):
+        return True
+    if basename.endswith((".example.py", ".example.ts", ".example.js")):
+        return True
+    if any(part in DOC_EXAMPLE_DIRS for part in parts):
+        return True
+    return False
 
 
 def _is_config_or_data_path(relative_path):
@@ -435,9 +503,19 @@ def _parse_search_request(query):
     raw_query = str(query or "").strip()
     lowered = raw_query.lower()
     include_config_data = False
+    include_tests = False
+    include_docs_examples = False
 
     if re.search(r"\b(include|in)\s+(json|toml|yaml|yml|config|configs|data|all)\b", lowered):
         include_config_data = True
+    if re.search(r"\b(include|in)\s+(test|tests|spec|specs|all)\b", lowered):
+        include_tests = True
+    if re.search(r"\b(include|in)\s+(doc|docs|documentation|readme|guide|guides|tutorial|tutorials|example|examples|sample|samples|usage|all)\b", lowered):
+        include_docs_examples = True
+    if re.search(r"\btest[_-]", lowered) or re.search(r"\b(spec|test)\.(js|ts|jsx|tsx)\b", lowered):
+        include_tests = True
+    if re.search(r"\breadme(?:\.md|\.txt)?\b", lowered):
+        include_docs_examples = True
 
     tokens = raw_query.split()
     cleaned_tokens = []
@@ -450,6 +528,15 @@ def _parse_search_request(query):
             lowered_token.endswith("." + extension) for extension in CONFIG_DATA_EXTENSIONS
         ):
             include_config_data = True
+            continue
+        if lowered_token in TEST_HINTS:
+            include_tests = True
+            continue
+        if lowered_token in DOC_EXAMPLE_HINTS:
+            include_docs_examples = True
+            continue
+        if lowered_token in {"readme.md", "readme.txt"} or lowered_token.endswith(".md"):
+            include_docs_examples = True
             continue
         cleaned_tokens.append(token)
 
@@ -464,6 +551,8 @@ def _parse_search_request(query):
         "raw_query": raw_query,
         "match_text": match_text,
         "include_config_data": include_config_data,
+        "include_tests": include_tests,
+        "include_docs_examples": include_docs_examples,
     }
 
 
@@ -510,6 +599,10 @@ def search_workspace(workspace_root, query):
     truncated = False
 
     for full_path, relative_path in _iter_workspace_files(root):
+        if _is_test_path(relative_path) and not parsed_query["include_tests"]:
+            continue
+        if _is_doc_or_example_path(relative_path) and not parsed_query["include_docs_examples"]:
+            continue
         if _is_config_or_data_path(relative_path) and not parsed_query["include_config_data"]:
             continue
         try:
@@ -578,6 +671,8 @@ def search_workspace(workspace_root, query):
         "files_with_matches": ranked_files,
         "truncated": truncated,
         "included_config_data": parsed_query["include_config_data"],
+        "included_tests": parsed_query["include_tests"],
+        "included_docs_examples": parsed_query["include_docs_examples"],
         "error": None if ranked_matches else "no_matches",
     }
 

@@ -1,14 +1,21 @@
 import os
 
 from app.memory import local_memory
-from app.services.chat_service import handle_chat
+from app.services.chat_service import handle_chat, retry_saved_execution
 from app.services.compaction_service import (
     format_compaction_result,
     get_compact_summary,
     maybe_compact_session,
     render_compact_summary,
 )
+from app.services.execution_service import (
+    EXECUTION_LIST_DEFAULT_LIMIT,
+    EXECUTION_LIST_MAX_LIMIT,
+    format_execution_detail,
+    format_execution_list,
+)
 from app.services.model_service import ensure_models_installed, format_install_results, format_status
+from app.services.onboarding_service import format_doctor_report, format_onboarding_guide
 from app.services.skill_service import format_skill_overview, get_skill, normalize_active_skills
 from app.services.workspace_service import (
     describe_pending_action,
@@ -25,7 +32,12 @@ HELP_TEXT = "\n".join(
         "Commands",
         "- help: show command list",
         "- status: inspect runtime and registered models",
+        "- doctor: inspect the full local control-plane state for this session",
+        "- onboard: show the guided local setup path and next moves",
         "- history [n]: show recent messages for the current session",
+        "- executions [n]: show recent execution records for this session",
+        "- execution <id|last>: inspect one execution in detail",
+        "- retry <id|last>: rerun a saved execution from its recorded state",
         "- summary: show compact session memory",
         "- compact: summarize older turns into compact session memory",
         "- workspace: show the current workspace",
@@ -92,6 +104,13 @@ def _parse_history_limit(text):
     if len(parts) == 2 and parts[1].isdigit():
         return max(1, int(parts[1]))
     return 10
+
+
+def _parse_executions_limit(text):
+    parts = text.split(maxsplit=1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return max(1, min(EXECUTION_LIST_MAX_LIMIT, int(parts[1])))
+    return EXECUTION_LIST_DEFAULT_LIMIT
 
 
 def _handle_session_switch(text):
@@ -352,11 +371,55 @@ def _handle_skill_command(text, session_id):
     }
 
 
+def _handle_retry_command(text, session_id):
+    parts = text.split(maxsplit=1)
+    target = parts[1].strip() if len(parts) == 2 and parts[1].strip() else "last"
+    execution = local_memory.get_execution(session_id=session_id, execution_id=target)
+    if not execution:
+        return {
+            "action": "retry",
+            "session_id": session_id,
+            "output": f"No execution found for '{target}' in session '{session_id}'.",
+        }
+
+    result = retry_saved_execution(execution, session_id=session_id)
+    return {
+        "action": "chat",
+        "session_id": session_id,
+        "output": _format_chat_result(result),
+        "result": result,
+    }
+
+
+def _handle_execution_command(text, session_id):
+    parts = text.split(maxsplit=1)
+    target = parts[1].strip() if len(parts) == 2 and parts[1].strip() else "last"
+    execution = local_memory.get_execution(session_id=session_id, execution_id=target)
+    if not execution:
+        return {
+            "action": "execution",
+            "session_id": session_id,
+            "output": f"No execution found for '{target}' in session '{session_id}'.",
+        }
+
+    return {
+        "action": "execution",
+        "session_id": session_id,
+        "output": format_execution_detail(execution),
+        "result": execution,
+    }
+
+
 def _format_chat_result(result):
     sections = [result["response"]]
 
     if result.get("workspace_action_message") and not result.get("approval_required"):
         sections.extend(["", f"[approved workspace action: {result['workspace_action_message']}]"])
+
+    if result.get("retried_from_execution_id"):
+        mode = result.get("retry_mode")
+        suffix = " using saved runtime state" if mode == "exact" else ""
+        sections.extend(["", f"[retried from execution {result['retried_from_execution_id']}{suffix}]"])
 
     if result["fallback_used"]:
         sections.extend(
@@ -397,6 +460,12 @@ def dispatch_input(text, session_id="default"):
     if lowered in {"status", "/status", "models", "/models"}:
         return {"action": "status", "session_id": session_id, "output": format_status()}
 
+    if lowered in {"doctor", "/doctor"}:
+        return {"action": "doctor", "session_id": session_id, "output": format_doctor_report(session_id=session_id)}
+
+    if lowered in {"onboard", "/onboard"}:
+        return {"action": "onboard", "session_id": session_id, "output": format_onboarding_guide(session_id=session_id)}
+
     if lowered in {"approve", "/approve"}:
         return _handle_approval_command(session_id=session_id)
 
@@ -420,6 +489,21 @@ def dispatch_input(text, session_id="default"):
             "session_id": session_id,
             "output": _format_history(session_id, limit),
         }
+
+    if lowered.startswith("executions") or lowered.startswith("/executions"):
+        limit = _parse_executions_limit(normalized.lstrip("/"))
+        executions = local_memory.get_executions(session_id=session_id, limit=limit)
+        return {
+            "action": "executions",
+            "session_id": session_id,
+            "output": format_execution_list(executions, session_id=session_id, limit=limit),
+        }
+
+    if lowered == "execution" or lowered == "/execution" or lowered.startswith("execution ") or lowered.startswith("/execution "):
+        return _handle_execution_command(normalized.lstrip("/"), session_id=session_id)
+
+    if lowered.startswith("retry") or lowered.startswith("/retry"):
+        return _handle_retry_command(normalized.lstrip("/"), session_id=session_id)
 
     if lowered in {"summary", "/summary"}:
         summary_text = render_compact_summary(get_compact_summary(session_id))

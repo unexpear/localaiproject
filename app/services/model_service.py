@@ -82,7 +82,8 @@ def startup_summary():
     lines.extend(
         [
             "",
-            "Commands: help, status, history [n], workspace, read, search, approve, deny, skills, sessions, session <name>, install-defaults, exit",
+            "Commands: help, status, doctor, onboard, history [n], executions [n], execution <id|last>, retry <id|last>, workspace, read, search, approve, deny, skills, sessions, session <name>, install-defaults, exit",
+            "Tip: run `onboard` for the guided setup path or `doctor` for a deeper control-plane check.",
         ]
     )
     return "\n".join(lines)

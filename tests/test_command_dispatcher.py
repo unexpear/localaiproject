@@ -45,6 +45,72 @@ class CommandDispatcherTests(unittest.TestCase):
         self.assertEqual(event["action"], "workspace")
         self.assertIn("Workspace:", event["output"])
 
+    def test_doctor_command_returns_control_plane_report(self):
+        with patch("app.services.command_dispatcher.format_doctor_report", return_value="Control Layer Doctor"):
+            event = dispatch_input("doctor", session_id="default")
+
+        self.assertEqual(event["action"], "doctor")
+        self.assertEqual(event["output"], "Control Layer Doctor")
+
+    def test_onboard_command_returns_setup_guide(self):
+        with patch("app.services.command_dispatcher.format_onboarding_guide", return_value="Onboard"):
+            event = dispatch_input("onboard", session_id="default")
+
+        self.assertEqual(event["action"], "onboard")
+        self.assertEqual(event["output"], "Onboard")
+
+    def test_executions_command_returns_formatted_execution_log(self):
+        executions = [{"id": "exe_123", "status": "completed", "message": "Explain router"}]
+        with patch("app.services.command_dispatcher.local_memory.get_executions", return_value=executions), patch(
+            "app.services.command_dispatcher.format_execution_list",
+            return_value="Executions (default)",
+        ):
+            event = dispatch_input("executions", session_id="default")
+
+        self.assertEqual(event["action"], "executions")
+        self.assertEqual(event["output"], "Executions (default)")
+
+    def test_retry_command_reruns_saved_execution(self):
+        execution = {"id": "exe_123", "message": "Explain router.py"}
+        retry_result = {
+            "ok": True,
+            "response": "Done.",
+            "fallback_used": False,
+            "requested_lane": "coding",
+            "resolved_lane": "coding",
+            "model": "qwen2.5-coder:7b",
+            "approval_required": False,
+            "compaction_performed": False,
+            "retried_from_execution_id": "exe_123",
+            "retry_mode": "exact",
+        }
+        with patch(
+            "app.services.command_dispatcher.local_memory.get_execution",
+            return_value=execution,
+        ), patch(
+            "app.services.command_dispatcher.retry_saved_execution",
+            return_value=retry_result,
+        ):
+            event = dispatch_input("retry exe_123", session_id="default")
+
+        self.assertEqual(event["action"], "chat")
+        self.assertIn("Done.", event["output"])
+        self.assertIn("retried from execution exe_123", event["output"])
+
+    def test_execution_command_returns_detailed_execution_view(self):
+        execution = {"id": "exe_123", "message": "Explain router.py"}
+        with patch(
+            "app.services.command_dispatcher.local_memory.get_execution",
+            return_value=execution,
+        ), patch(
+            "app.services.command_dispatcher.format_execution_detail",
+            return_value="Execution exe_123",
+        ):
+            event = dispatch_input("execution exe_123", session_id="default")
+
+        self.assertEqual(event["action"], "execution")
+        self.assertEqual(event["output"], "Execution exe_123")
+
     def test_skill_add_command_enables_skill(self):
         with patch(
             "app.services.command_dispatcher.local_memory.get_session_context",

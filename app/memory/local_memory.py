@@ -1,6 +1,9 @@
 import json
 import os
+from uuid import uuid4
 from datetime import datetime, timezone
+
+from app.config import SESSION_EXECUTION_HISTORY_LIMIT
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "local_memory.json")
 
@@ -31,6 +34,7 @@ def _default_context():
 def _default_session():
     return {
         "history": [],
+        "executions": [],
         "summary": _default_summary(),
         "context": _default_context(),
     }
@@ -187,10 +191,177 @@ def _normalize_approved_search(data):
     }
 
 
+def _normalize_execution_message(message):
+    if not isinstance(message, dict):
+        return None
+
+    role = str(message.get("role") or "").strip().lower()
+    content = str(message.get("content") or "").strip()
+    if role not in {"system", "user", "assistant"} or not content:
+        return None
+
+    return {
+        "role": role,
+        "content": content,
+    }
+
+
+def _normalize_execution_messages(messages):
+    normalized = []
+    for message in _coerce_list(messages):
+        rendered = _normalize_execution_message(message)
+        if not rendered:
+            continue
+        normalized.append(rendered)
+    return normalized
+
+
+def _normalize_execution_workspace_result(result):
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+
+    kind = str(result.get("kind") or "").strip().lower()
+    if kind == "read":
+        files = []
+        for file_result in result.get("files", []):
+            if not isinstance(file_result, dict) or not file_result.get("ok"):
+                continue
+            relative_path = str(file_result.get("relative_path") or "").replace("\\", "/").strip()
+            content = str(file_result.get("content_with_line_numbers") or "").strip()
+            if not relative_path or not content:
+                continue
+            files.append(
+                {
+                    "ok": True,
+                    "relative_path": relative_path,
+                    "content_with_line_numbers": content,
+                    "truncated": bool(file_result.get("truncated")),
+                }
+            )
+        if not files:
+            return None
+        return {
+            "ok": True,
+            "kind": "read",
+            "files": files[:2],
+        }
+
+    if kind == "search":
+        matches = []
+        for match in result.get("matches", []):
+            if not isinstance(match, dict):
+                continue
+            relative_path = str(match.get("relative_path") or "").replace("\\", "/").strip()
+            if not relative_path:
+                continue
+            matches.append(
+                {
+                    "relative_path": relative_path,
+                    "line_number": int(match.get("line_number", 0) or 0),
+                    "line": str(match.get("line") or "").strip(),
+                }
+            )
+        files = []
+        seen = set()
+        for path in _coerce_list(result.get("files_with_matches")):
+            cleaned = str(path or "").replace("\\", "/").strip().lstrip("./")
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            files.append(cleaned)
+        return {
+            "ok": True,
+            "kind": "search",
+            "query": str(result.get("query") or "").strip() or None,
+            "raw_query": str(result.get("raw_query") or "").strip() or None,
+            "matches": matches[:12],
+            "files_with_matches": files[:6],
+            "truncated": bool(result.get("truncated")),
+        }
+
+    return None
+
+
+def _normalize_execution_replay(replay):
+    if not isinstance(replay, dict):
+        return {"model": None, "messages": [], "approved_workspace_result": None}
+
+    model = str(replay.get("model") or "").strip() or None
+    return {
+        "model": model,
+        "messages": _normalize_execution_messages(replay.get("messages")),
+        "approved_workspace_result": _normalize_execution_workspace_result(replay.get("approved_workspace_result")),
+    }
+
+
+def _normalize_execution_approval(approval):
+    if not isinstance(approval, dict):
+        return {"state": "none", "description": "none"}
+
+    state = str(approval.get("state") or "").strip().lower()
+    if state not in {"none", "pending", "used"}:
+        state = "none"
+    description = str(approval.get("description") or "").strip() or "none"
+    return {
+        "state": state,
+        "description": description,
+    }
+
+
+def _normalize_execution(execution):
+    if not isinstance(execution, dict):
+        return None
+
+    status = str(execution.get("status") or "").strip().lower()
+    if status not in {"completed", "failed", "needs_approval", "no_model"}:
+        status = "failed"
+
+    message = str(execution.get("message") or "").strip()
+    if not message:
+        return None
+
+    return {
+        "id": str(execution.get("id") or f"exe_{uuid4().hex[:10]}").strip(),
+        "created_at": execution.get("created_at") or _now(),
+        "status": status,
+        "message": message,
+        "message_preview": str(execution.get("message_preview") or message).replace("\r", " ").replace("\n", " ").strip(),
+        "requested_lane": str(execution.get("requested_lane") or "").strip() or None,
+        "resolved_lane": str(execution.get("resolved_lane") or "").strip() or None,
+        "model": str(execution.get("model") or "").strip() or None,
+        "error": str(execution.get("error") or "").strip() or None,
+        "fallback_used": bool(execution.get("fallback_used")),
+        "route_confidence": str(execution.get("route_confidence") or "").strip() or None,
+        "route_scores": execution.get("route_scores") if isinstance(execution.get("route_scores"), dict) else {},
+        "route_primary_signal": str(execution.get("route_primary_signal") or "").strip() or None,
+        "route_context_used": bool(execution.get("route_context_used")),
+        "route_context_reason": str(execution.get("route_context_reason") or "").strip() or None,
+        "inference_message_count": int(execution.get("inference_message_count", 0) or 0)
+        if execution.get("inference_message_count") is not None
+        else None,
+        "summary_included": bool(execution.get("summary_included")),
+        "compaction_performed": bool(execution.get("compaction_performed")),
+        "approval": _normalize_execution_approval(execution.get("approval")),
+        "replay": _normalize_execution_replay(execution.get("replay")),
+        "retry_source_execution_id": str(execution.get("retry_source_execution_id") or "").strip() or None,
+    }
+
+
+def _normalize_executions(executions):
+    normalized = []
+    for execution in _coerce_list(executions):
+        rendered = _normalize_execution(execution)
+        if not rendered:
+            continue
+        normalized.append(rendered)
+    return normalized[-SESSION_EXECUTION_HISTORY_LIMIT:]
+
+
 def _ensure_session(session):
     if not isinstance(session, dict):
         session = {}
     session.setdefault("history", [])
+    session["executions"] = _normalize_executions(session.get("executions"))
     session["summary"] = _normalize_summary(session.get("summary"))
     session["context"] = _normalize_context(session.get("context"))
     return session
@@ -265,6 +436,28 @@ def get_history(session_id="default", limit=None):
     if limit is None:
         return history
     return history[-limit:]
+
+
+def get_executions(session_id="default", limit=None):
+    executions = load_memory(session_id=session_id).get("executions", [])
+    if limit is None:
+        return executions
+    return executions[-limit:]
+
+
+def get_execution(session_id="default", execution_id=None):
+    executions = get_executions(session_id=session_id)
+    if not executions:
+        return None
+
+    if execution_id in {None, "", "last", "latest"}:
+        return executions[-1]
+
+    target = str(execution_id).strip()
+    for execution in executions:
+        if execution.get("id") == target:
+            return execution
+    return None
 
 
 def get_session_summary(session_id="default"):
@@ -368,3 +561,18 @@ def append_message(role, content, model=None, session_id="default", metadata=Non
     data["sessions"][session_id] = session
     save_memory(data)
     return msg
+
+
+def append_execution(execution, session_id="default"):
+    normalized = _normalize_execution(execution)
+    if not normalized:
+        return None
+
+    data = load_memory()
+    session = data["sessions"].setdefault(session_id, _default_session())
+    session = _ensure_session(session)
+    session["executions"].append(normalized)
+    session["executions"] = _normalize_executions(session["executions"])
+    data["sessions"][session_id] = session
+    save_memory(data)
+    return normalized
