@@ -157,9 +157,18 @@ IDENTIFIER_PATTERN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.]{2,}\b")
 
 
 def resolve_workspace_path(raw_path, cwd=None):
+    """Resolve a user-supplied workspace path.
+
+    Returns ``(resolved_path, error_text, reason_tag)``:
+      - On success: ``(path, None, None)``
+      - On failure: ``(None, "<human message>", "<canonical reason tag>")``
+
+    The ``reason_tag`` field is consumed by the dispatcher to set the
+    standard ``event["reason"]`` (see ``error-vocabulary.md``).
+    """
     text = str(raw_path or "").strip().strip('"').strip("'")
     if not text:
-        return None, "Usage: workspace <path>"
+        return None, "Usage: workspace <path>", "invalid_argument"
 
     expanded = os.path.expandvars(os.path.expanduser(text))
     if cwd and not os.path.isabs(expanded):
@@ -167,10 +176,12 @@ def resolve_workspace_path(raw_path, cwd=None):
 
     resolved = os.path.abspath(expanded)
     if not os.path.exists(resolved):
-        return None, f"Workspace path does not exist: {resolved}"
+        return None, f"Workspace path does not exist: {resolved}", "path_not_found"
     if not os.path.isdir(resolved):
-        return None, f"Workspace path is not a directory: {resolved}"
-    return resolved, None
+        # "expected a directory, got a file" — closest canonical tag is
+        # invalid_argument; we don't have a "not_a_directory" tag.
+        return None, f"Workspace path is not a directory: {resolved}", "invalid_argument"
+    return resolved, None, None
 
 
 def _detect_stack(path):
@@ -680,26 +691,92 @@ def search_workspace(workspace_root, query):
 def describe_pending_action(action):
     if not isinstance(action, dict):
         return "unknown action"
-    if action.get("kind") == "read":
+    kind = action.get("kind")
+    if kind == "read":
         paths = action.get("paths") or []
         if len(paths) == 1:
             return f"read {paths[0]}"
         return "read " + ", ".join(paths)
-    if action.get("kind") == "search":
+    if kind == "search":
         return f"search workspace for '{action.get('query', '')}'"
+    if kind in {"write", "delete"}:
+        return describe_pending_write_action(action)
+    if kind == "bundle":
+        # Phase 1 of patch-taxonomy.md: bundle wraps N writes/deletes.
+        from app.services.patches import describe_bundle_summary
+        return describe_bundle_summary(action)
+    if kind == "tool_call":
+        # Phase 3 of tool-calling.md: a single dispatcher command
+        # the model proposed. Truncate long commands so the banner
+        # stays readable.
+        command = (action.get("command") or "").replace("\n", " ").strip()
+        if len(command) > 120:
+            command = command[:117] + "..."
+        return f"tool call: {command}"
+    if kind == "cowork_plan":
+        return f"cowork plan {action.get('run_id', '')}"
+    if kind == "browser_navigate":
+        return f"browser navigate {action.get('url', '')}"
     return "unknown action"
 
 
 def format_approval_request(action):
+    """Render the approval banner. Phase 2 of patch-taxonomy.md
+    layered tier badges + (for L3) a shell-generated impact
+    statement and a typed-confirmation prompt on top of the legacy
+    Phase-1 banner."""
+    from app.services.impact_statements import (
+        confirmation_phrase_for, impact_statement_for, tier_for,
+    )
+
     description = describe_pending_action(action)
     reason = action.get("reason")
-    lines = [
-        "[approval required]",
-        f"Requested action: {description}",
-    ]
+    tier = tier_for(action)
+
+    lines = ["[approval required]"]
+    if tier == "L1":
+        lines.append("Tier: L1 (single-tap, easily reversible)")
+    elif tier == "L3":
+        lines.append("Tier: L3 (typed confirmation required)")
+    else:
+        lines.append("Tier: L2 (review and confirm)")
+    lines.append(f"Requested action: {description}")
     if reason:
         lines.append(f"Why: {reason}")
-    lines.append("Type `approve` to continue or `deny` to cancel.")
+
+    # L3 patches: show the shell-generated impact statement and
+    # the typed-confirmation prompt. Plain `approve` is refused for
+    # L3; the user must type `approve <phrase>` matching the
+    # deterministic phrase derived from the patch content.
+    if tier == "L3":
+        impact = impact_statement_for(action)
+        if impact:
+            lines.append("")
+            lines.append(f"Impact: {impact}")
+        phrase = confirmation_phrase_for(action)
+        if phrase:
+            lines.append("")
+            lines.append(
+                f"This change is high-impact. To proceed, type "
+                f"`approve {phrase}` (case-insensitive). "
+                f"`deny` to cancel."
+            )
+        else:
+            # No phrase derivable -> degrade to L2 prompt
+            lines.append("Type `approve` to continue or `deny` to cancel.")
+    else:
+        # L1 / L2 - same prompt today; the difference is the tier
+        # badge + (for L1) the user knowing the impact is small.
+        if tier == "L1":
+            # Compact: no extra impact line for L1 (the description
+            # is enough since the change is easily reversible).
+            pass
+        else:
+            # L2: include impact when there's a non-trivial one.
+            impact = impact_statement_for(action)
+            if impact:
+                lines.append(f"Impact: {impact}")
+        lines.append("Type `approve` to continue or `deny` to cancel.")
     return "\n".join(lines)
 
 
@@ -894,3 +971,235 @@ def plan_workspace_action(message, workspace_root, approved_search=None):
         }
 
     return None
+
+
+# ============================================================
+# Workspace writes (Phase 1 — see docs/design/workspace-writes.md)
+# ============================================================
+
+import difflib
+import hashlib
+
+
+def resolve_workspace_write_path(workspace_root, requested_path):
+    """Resolve a path inside the workspace for a *write* or *delete*.
+
+    Differs from ``resolve_workspace_item_path`` in two ways:
+
+      1. Tolerates non-existence (we may be CREATING the file).
+      2. Refuses symlinks: writing to a symlink could escape the
+         workspace by following the link target.
+
+    Returns a dict ``{ok, error, workspace_path, absolute_path,
+    relative_path, exists, is_dir, is_symlink}``. On the failure path
+    ``error`` is one of:
+
+      - ``"missing_path"`` — empty input
+      - ``"outside_workspace"`` — traversal attempt
+      - ``"symlink_unsupported"`` — path resolves to a symlink
+      - ``"is_directory"`` — write target is a directory
+    """
+    root, error = _normalize_workspace_root(workspace_root)
+    if error:
+        return {"ok": False, "error": error}
+
+    raw = str(requested_path or "").strip().strip('"').strip("'")
+    if not raw:
+        return {"ok": False, "error": "missing_path"}
+
+    candidate = os.path.normpath(raw)
+    if not os.path.isabs(candidate):
+        candidate = os.path.join(root, candidate)
+    candidate = os.path.abspath(candidate)
+
+    if not _is_within_workspace(root, candidate):
+        return {"ok": False, "error": "outside_workspace", "workspace_path": root}
+
+    is_symlink = os.path.islink(candidate)
+    if is_symlink:
+        return {
+            "ok": False,
+            "error": "symlink_unsupported",
+            "workspace_path": root,
+            "absolute_path": candidate,
+        }
+
+    exists = os.path.exists(candidate)
+    is_dir = os.path.isdir(candidate) if exists else False
+    if exists and is_dir:
+        return {
+            "ok": False,
+            "error": "is_directory",
+            "workspace_path": root,
+            "absolute_path": candidate,
+            "relative_path": os.path.relpath(candidate, root).replace("\\", "/"),
+        }
+
+    return {
+        "ok": True,
+        "workspace_path": root,
+        "absolute_path": candidate,
+        "relative_path": os.path.relpath(candidate, root).replace("\\", "/"),
+        "exists": exists,
+        "is_dir": False,
+        "is_symlink": False,
+    }
+
+
+def read_existing_for_diff(absolute_path):
+    """Read a file's current text content for diff purposes.
+
+    Returns ``(content, exists, error_text)``. ``content`` is None if
+    the file doesn't exist or fails to read; ``exists`` mirrors the
+    actual filesystem state at read time.
+    """
+    if not os.path.exists(absolute_path):
+        return None, False, None
+    try:
+        with open(absolute_path, "r", encoding="utf-8") as fh:
+            return fh.read(), True, None
+    except UnicodeDecodeError:
+        return None, True, "binary_or_non_utf8"
+    except OSError as exc:
+        return None, True, str(exc)
+
+
+def sha256_text(text):
+    """Hex SHA-256 of a text string. Used for write_backup integrity."""
+    if text is None:
+        return None
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def compute_unified_diff(old_content, new_content, path):
+    """Return a unified-diff string between two text contents.
+
+    ``old_content`` may be None (treated as empty for "new file"
+    creates). The header lines reference ``path``.
+    """
+    a = (old_content or "").splitlines(keepends=True)
+    b = (new_content or "").splitlines(keepends=True)
+    return "".join(
+        difflib.unified_diff(
+            a,
+            b,
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            n=3,
+        )
+    )
+
+
+def apply_workspace_write(absolute_path, content):
+    """Atomically write ``content`` to ``absolute_path``.
+
+    Creates parent directories as needed. Returns
+    ``{ok, bytes_written, created} | {ok: False, error}``.
+    """
+    try:
+        parent = os.path.dirname(absolute_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        existed = os.path.exists(absolute_path)
+        # Write through a sibling tempfile + atomic replace so a crash
+        # mid-write can't leave a partial file.
+        tmp_path = absolute_path + ".__lai_partial__"
+        with open(tmp_path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(content)
+        os.replace(tmp_path, absolute_path)
+        return {
+            "ok": True,
+            "bytes_written": len(content.encode("utf-8")),
+            "created": not existed,
+        }
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def apply_workspace_delete(absolute_path):
+    """Remove a file. Returns ``{ok, removed} | {ok: False, error}``.
+
+    Refuses to remove directories (the dispatcher should already have
+    blocked that via the resolve helper, but we belt-and-brace here).
+    """
+    try:
+        if not os.path.exists(absolute_path):
+            return {"ok": True, "removed": False}  # already gone — idempotent
+        if os.path.isdir(absolute_path):
+            return {"ok": False, "error": "is_directory"}
+        os.remove(absolute_path)
+        return {"ok": True, "removed": True}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def describe_pending_write_action(action):
+    """Human-readable summary of a write/delete pending action."""
+    if not isinstance(action, dict):
+        return "unknown action"
+    kind = action.get("kind")
+    path = action.get("path")
+    if kind == "write":
+        return f"write {path}" + (" (create)" if action.get("create") else " (modify)")
+    if kind == "delete":
+        return f"delete {path}"
+    return "unknown action"
+
+
+# ============================================================
+# Phase 2 — chat-flow fenced-block detection
+# ============================================================
+
+import re as _re
+
+# Match ```<lang>? <attrs> ... ``` — info line is everything between the
+# opening backticks and the next newline. We only care about blocks whose
+# info line contains a ``file=<path>`` token; the rest are pass-through.
+_FENCED_BLOCK_RE = _re.compile(
+    r"```([^\n]*)\n(.*?)```",
+    _re.DOTALL,
+)
+# Inside the info line, match `file=<path>` (path may be quoted with " or ').
+_FILE_ATTR_RE = _re.compile(
+    r"""file\s*=\s*(?:"([^"]+)"|'([^']+)'|(\S+))""",
+)
+
+
+def parse_fenced_writes(text):
+    """Scan ``text`` for ```<lang> file=<path> ... ``` blocks.
+
+    Returns a list of ``{"path": str, "content": str, "info": str}``
+    dicts in the order they appear. Blocks WITHOUT a ``file=`` attr in
+    their info line are ignored — only annotated blocks become write
+    proposals. Empty / malformed blocks are skipped.
+
+    Phase 2 of `workspace-writes.md`. The chat handler invokes this
+    against the model's response to detect intent-to-write.
+    """
+    if not text or not isinstance(text, str):
+        return []
+    results = []
+    for match in _FENCED_BLOCK_RE.finditer(text):
+        info_line = match.group(1).strip()
+        body = match.group(2)
+        if not info_line:
+            continue
+        file_match = _FILE_ATTR_RE.search(info_line)
+        if not file_match:
+            continue
+        # First non-None capture group is the path; quoted variants
+        # take precedence over bare.
+        path = file_match.group(1) or file_match.group(2) or file_match.group(3) or ""
+        path = path.strip().replace("\\", "/")
+        # Strip a single leading "./" only — NEVER strip ".." characters.
+        # The resolver (`resolve_workspace_write_path`) catches traversal
+        # attempts; we just clean up the obvious "./" prefix here.
+        while path.startswith("./"):
+            path = path[2:]
+        if not path:
+            continue
+        # Strip a single trailing newline that ``` always introduces.
+        if body.endswith("\n"):
+            body = body[:-1]
+        results.append({"path": path, "content": body, "info": info_line})
+    return results

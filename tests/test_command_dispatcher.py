@@ -27,7 +27,7 @@ class CommandDispatcherTests(unittest.TestCase):
     def test_workspace_command_sets_session_workspace(self):
         with patch(
             "app.services.command_dispatcher.resolve_workspace_path",
-            return_value=("C:\\Users\\micha\\Desktop\\localaiproject", None),
+            return_value=("C:\\Users\\micha\\Desktop\\localaiproject", None, None),
         ), patch("app.services.command_dispatcher.local_memory.set_workspace") as set_workspace_mock, patch(
             "app.services.command_dispatcher.local_memory.clear_pending_approval"
         ), patch(
@@ -198,6 +198,119 @@ class CommandDispatcherTests(unittest.TestCase):
         set_pending_mock.assert_called_once_with(session_id="default", pending_approval=pending_action)
         self.assertEqual(event["action"], "chat")
         self.assertIn("[approval required]", event["output"])
+
+    def test_install_command_without_target_returns_usage(self):
+        with patch("app.services.command_dispatcher.install_single_model") as install_mock:
+            event = dispatch_input("install", session_id="default")
+
+        install_mock.assert_not_called()
+        self.assertEqual(event["action"], "install")
+        self.assertIn("Usage: install", event["output"])
+
+    def test_install_command_pulls_target_lane(self):
+        install_result = {
+            "role": "vision",
+            "model": "qwen3-vl",
+            "success": True,
+            "output": "success",
+            "already_installed": False,
+            "warnings": [],
+        }
+        with patch(
+            "app.services.command_dispatcher.install_single_model",
+            return_value=install_result,
+        ) as install_mock:
+            event = dispatch_input("install vision", session_id="default")
+
+        install_mock.assert_called_once_with("vision")
+        self.assertEqual(event["action"], "install")
+        self.assertIn("Installed vision -> qwen3-vl", event["output"])
+
+    def test_install_command_surfaces_unfiltered_warning(self):
+        install_result = {
+            "role": "unfiltered",
+            "model": "dolphin3:8b",
+            "success": True,
+            "output": "success",
+            "already_installed": False,
+            "warnings": ["Unfiltered lane: this model has no safety filter. Use it deliberately for local, personal contexts only."],
+        }
+        with patch(
+            "app.services.command_dispatcher.install_single_model",
+            return_value=install_result,
+        ):
+            event = dispatch_input("install unfiltered", session_id="default")
+
+        self.assertEqual(event["action"], "install")
+        self.assertIn("Installed unfiltered -> dolphin3:8b", event["output"])
+        self.assertIn("Warning: Unfiltered lane", event["output"])
+
+    def test_install_defaults_is_not_shadowed_by_install_prefix(self):
+        with patch(
+            "app.services.command_dispatcher.ensure_models_installed",
+            return_value=[("llama3.1:8b", True, "success")],
+        ) as ensure_mock, patch(
+            "app.services.command_dispatcher.install_single_model",
+        ) as install_single_mock:
+            event = dispatch_input("install-defaults", session_id="default")
+
+        ensure_mock.assert_called_once()
+        install_single_mock.assert_not_called()
+        self.assertEqual(event["action"], "install-defaults")
+
+    def test_uninstall_command_without_target_returns_usage(self):
+        with patch("app.services.command_dispatcher.uninstall_single_model") as uninstall_mock:
+            event = dispatch_input("uninstall", session_id="default")
+
+        uninstall_mock.assert_not_called()
+        self.assertEqual(event["action"], "uninstall")
+        self.assertIn("Usage: uninstall", event["output"])
+
+    def test_uninstall_command_removes_target_lane(self):
+        uninstall_result = {
+            "role": "vision",
+            "model": "qwen3-vl",
+            "success": True,
+            "output": "deleted",
+            "not_installed": False,
+        }
+        with patch(
+            "app.services.command_dispatcher.uninstall_single_model",
+            return_value=uninstall_result,
+        ) as uninstall_mock:
+            event = dispatch_input("uninstall vision", session_id="default")
+
+        uninstall_mock.assert_called_once_with("vision")
+        self.assertEqual(event["action"], "uninstall")
+        self.assertIn("Uninstalled vision (qwen3-vl)", event["output"])
+
+    def test_models_command_renders_lane_overview(self):
+        with patch(
+            "app.services.command_dispatcher.format_models_overview",
+            return_value="Registered Lanes\nDetected RAM: 32.0 GB",
+        ) as overview_mock:
+            event = dispatch_input("models", session_id="default")
+
+        overview_mock.assert_called_once()
+        self.assertEqual(event["action"], "models")
+        self.assertIn("Registered Lanes", event["output"])
+
+    def test_uninstall_command_reports_not_installed(self):
+        uninstall_result = {
+            "role": "vision",
+            "model": "qwen3-vl",
+            "success": False,
+            "output": "not installed",
+            "not_installed": True,
+        }
+        with patch(
+            "app.services.command_dispatcher.uninstall_single_model",
+            return_value=uninstall_result,
+        ):
+            event = dispatch_input("uninstall vision", session_id="default")
+
+        self.assertEqual(event["action"], "uninstall")
+        self.assertIn("not installed", event["output"])
 
 
 if __name__ == "__main__":

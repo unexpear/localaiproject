@@ -1,11 +1,21 @@
 import os
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from app.memory import local_memory
 from app.services.command_dispatcher import dispatch_input
 from app.services.execution_service import build_execution_graph, format_execution_detail
-from app.services.model_service import ensure_models_installed, format_install_results, get_status, startup_summary
+from app.services.model_service import (
+    ensure_models_installed,
+    format_install_results,
+    format_single_install_result,
+    format_uninstall_result,
+    get_status,
+    install_single_model,
+    startup_summary,
+    uninstall_single_model,
+)
 
 WINDOW_TITLE = "Local AI Control Layer"
 GRAPH_NODE_WIDTH = 200
@@ -136,6 +146,9 @@ class LocalAIWindow:
         self.status_var = tk.StringVar()
         self.node_detail_var = tk.StringVar(value=GRAPH_DEFAULT_DETAIL)
         self.input_var = tk.StringVar()
+        self.progress_var = tk.StringVar(value="")
+        self._install_in_flight = False
+        self._install_cancel_event = None
 
         self._build_ui()
         self._append_transcript("Control", startup_summary())
@@ -172,9 +185,10 @@ class LocalAIWindow:
         self.transcript.tag_configure("speaker", font=("Segoe UI", 10, "bold"))
 
         quick_actions = ttk.Frame(left)
-        quick_actions.pack(fill=tk.X, pady=(10, 8))
+        quick_actions.pack(fill=tk.X, pady=(10, 4))
         for label, command in (
             ("Status", "status"),
+            ("Models", "models"),
             ("Doctor", "doctor"),
             ("Onboard", "onboard"),
             ("Executions", "executions"),
@@ -184,6 +198,28 @@ class LocalAIWindow:
             ttk.Button(quick_actions, text=label, command=lambda value=command: self._dispatch_text(value)).pack(
                 side=tk.LEFT, padx=(0, 6)
             )
+
+        install_row = ttk.Frame(left)
+        install_row.pack(fill=tk.X, pady=(0, 8))
+        for label, command in (
+            ("Install Vision", "install vision"),
+            ("Install Unfiltered", "install unfiltered"),
+            ("Uninstall Vision", "uninstall vision"),
+            ("Uninstall Unfiltered", "uninstall unfiltered"),
+        ):
+            ttk.Button(install_row, text=label, command=lambda value=command: self._dispatch_text(value)).pack(
+                side=tk.LEFT, padx=(0, 6)
+            )
+
+        progress_row = ttk.Frame(left)
+        progress_row.pack(fill=tk.X, pady=(0, 8))
+        self.progress_bar = ttk.Progressbar(progress_row, mode="determinate", maximum=100, value=0)
+        self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(progress_row, textvariable=self.progress_var, width=44, anchor="w").pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        self.cancel_button = ttk.Button(progress_row, text="Cancel", command=self._cancel_install, state=tk.DISABLED)
+        self.cancel_button.pack(side=tk.LEFT, padx=(8, 0))
 
         input_row = ttk.Frame(left)
         input_row.pack(fill=tk.X)
@@ -284,9 +320,105 @@ class LocalAIWindow:
             return
 
         self._append_transcript("Control", f"Downloading missing required models: {model_list}")
-        results = ensure_models_installed()
-        self._append_transcript("Control", format_install_results(results))
+        self._run_async_install("install-defaults")
+
+    def _run_async_install(self, command):
+        """Run install-defaults / install <target> / uninstall <target> off the UI thread."""
+        if self._install_in_flight:
+            self._append_transcript("Control", "An install is already running; please wait for it to finish.")
+            return
+
+        self._install_in_flight = True
+        self._install_cancel_event = threading.Event()
+        cancel_event = self._install_cancel_event
+        self._set_progress(0, "Starting...")
+        cancellable = command == "install-defaults" or command.startswith("install ")
+        self.cancel_button.configure(state=tk.NORMAL if cancellable else tk.DISABLED)
+
+        def worker():
+            try:
+                if command == "install-defaults":
+                    results = ensure_models_installed(
+                        progress_callback=self._on_pull_event, cancel_event=cancel_event
+                    )
+                    output = format_install_results(results)
+                elif command.startswith("install "):
+                    target = command[len("install "):].strip()
+                    result = install_single_model(
+                        target, progress_callback=self._on_pull_event, cancel_event=cancel_event
+                    )
+                    output = format_single_install_result(result)
+                elif command.startswith("uninstall "):
+                    target = command[len("uninstall "):].strip()
+                    result = uninstall_single_model(target)
+                    output = format_uninstall_result(result)
+                else:
+                    output = f"Unknown install command: {command}"
+            except Exception as exc:
+                output = f"Install error: {exc}"
+            self.root.after(0, lambda: self._finish_async_install(output))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _cancel_install(self):
+        if not self._install_in_flight:
+            return
+        if self._install_cancel_event is None:
+            return
+        self._install_cancel_event.set()
+        self.cancel_button.configure(state=tk.DISABLED)
+        self._set_progress(None, "Cancelling...")
+
+    def _finish_async_install(self, output):
+        self._install_in_flight = False
+        self._install_cancel_event = None
+        self._set_progress(0, "")
+        self.cancel_button.configure(state=tk.DISABLED)
+        self._append_transcript("Control", output)
         self._refresh_status_banner()
+
+    def _on_pull_event(self, event):
+        # Invoked from a worker thread; marshal to the UI thread.
+        self.root.after(0, lambda e=event: self._apply_pull_event(e))
+
+    def _apply_pull_event(self, event):
+        phase = event.get("phase")
+        model = event.get("model") or ""
+        if phase == "queue":
+            models = event.get("models") or []
+            self._set_progress(0, f"Queued {len(models)} model(s)")
+            return
+        if phase == "start":
+            self._set_progress(0, f"Starting {model} ({event.get('index')}/{event.get('total')})")
+            return
+        if phase == "blocked":
+            self._set_progress(0, f"Blocked {model}: {event.get('reason')}")
+            return
+        if phase == "retry":
+            self._set_progress(0, f"Retrying {model}...")
+            return
+        if phase == "done":
+            state = "ok" if event.get("success") else "failed"
+            self._set_progress(100 if event.get("success") else 0, f"{model}: {state}")
+            return
+
+        total = event.get("total")
+        completed = event.get("completed")
+        status_text = event.get("status") or ""
+        if isinstance(total, int) and total > 0 and isinstance(completed, int):
+            percent = max(0, min(100, int(completed / total * 100)))
+            self._set_progress(percent, f"{model}: {status_text} {percent}%")
+        elif status_text:
+            self._set_progress(None, f"{model}: {status_text}")
+
+    def _set_progress(self, value, message):
+        if value is not None:
+            try:
+                self.progress_bar.configure(mode="determinate")
+                self.progress_bar["value"] = value
+            except tk.TclError:
+                pass
+        self.progress_var.set(message)
 
     def _on_submit(self, *_args):
         text = self.input_var.get().strip()
@@ -297,6 +429,13 @@ class LocalAIWindow:
 
     def _dispatch_text(self, text):
         self._append_transcript(_input_prompt(self.session_id).strip(": "), text)
+
+        stripped = text.strip()
+        lowered = stripped.lower().lstrip("/")
+        if lowered == "install-defaults" or lowered.startswith("install ") or lowered.startswith("uninstall "):
+            self._run_async_install(lowered)
+            return
+
         event = dispatch_input(text, session_id=self.session_id)
         self.session_id = event.get("session_id", self.session_id)
 

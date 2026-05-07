@@ -1,9 +1,24 @@
+from app.hardware import summary as hardware_summary
 from app.memory import local_memory
 from app.models import model_registry
 from app.services import compaction_service
 from app.services.model_service import get_status
 from app.services.skill_service import normalize_active_skills
 from app.services.workspace_service import describe_pending_action, inspect_workspace
+
+
+FIT_LABELS = {
+    "safe": "safe",
+    "tight": "tight (will run but uses most of RAM)",
+    "too_big": "too big for local RAM",
+    "unknown": "fit unknown",
+}
+
+
+def _format_ram(ram_bytes):
+    if not ram_bytes:
+        return "unknown"
+    return f"{ram_bytes / (1024 ** 3):.1f} GB"
 
 
 def _version_tuple(version):
@@ -31,10 +46,11 @@ def _version_meets_requirement(current_version, required_version):
     return current >= required
 
 
-def _lane_rows(status):
+def _lane_rows(status, ram_bytes=None):
     installed_models = {entry["model"] for entry in status.get("installed", [])}
     current_version = status.get("version")
     rows = []
+    fit_by_role = model_registry.get_hardware_lane_fit(ram_bytes=ram_bytes)
 
     for role, info in model_registry.MODEL_REGISTRY.items():
         state = "ready" if info["model"] in installed_models else "missing required" if info["required"] else "optional, not installed"
@@ -42,12 +58,16 @@ def _lane_rows(status):
         required_version = info.get("requires_ollama_version")
         if required_version and not _version_meets_requirement(current_version, required_version):
             details.append(f"needs Ollama {required_version}+")
+        fit = fit_by_role.get(role, {})
+        if fit.get("tier") in {"tight", "too_big"}:
+            details.append(FIT_LABELS[fit["tier"]])
         rows.append(
             {
                 "role": role,
                 "model": info["model"],
                 "state": state,
                 "details": details,
+                "fit": fit,
             }
         )
 
@@ -98,14 +118,16 @@ def get_doctor_snapshot(session_id="default"):
     context = local_memory.get_session_context(session_id=session_id)
     summary = compaction_service.get_compact_summary(session_id=session_id)
     workspace_snapshot = inspect_workspace(context.get("workspace_path"))
+    hardware = hardware_summary()
     return {
         "session_id": session_id,
         "status": status,
-        "lanes": _lane_rows(status),
+        "lanes": _lane_rows(status, ram_bytes=hardware.get("ram")),
         "context": context,
         "summary": summary,
         "summary_counts": _summary_counts(summary),
         "workspace_snapshot": workspace_snapshot,
+        "hardware": hardware,
         "next_moves": _next_moves(status, context, workspace_snapshot),
     }
 
@@ -116,6 +138,7 @@ def format_doctor_report(session_id="default"):
     context = snapshot["context"]
     workspace_snapshot = snapshot["workspace_snapshot"]
     summary_counts = snapshot["summary_counts"]
+    hardware = snapshot["hardware"]
     lines = [
         "Control Layer Doctor",
         f"Session: {snapshot['session_id']}",
@@ -124,11 +147,23 @@ def format_doctor_report(session_id="default"):
         f"- Ollama: {'connected' if status.get('runtime_available') else 'offline'}",
         f"- Version: {status.get('version') or 'unknown'}",
         "",
+        "Hardware",
+        f"- RAM: {_format_ram(hardware.get('ram'))}",
+        f"- GPU: {hardware.get('gpu') or 'not detected'}",
+        "",
         "Lanes",
     ]
 
     for lane in snapshot["lanes"]:
-        suffix = f" ({', '.join(lane['details'])})" if lane["details"] else ""
+        fit = lane.get("fit") or {}
+        size_gb = fit.get("size_gb")
+        parts = list(lane["details"])
+        if size_gb:
+            parts.insert(0, f"{size_gb} GB")
+        fit_tier = fit.get("tier")
+        if fit_tier == "safe" and "safe" not in parts:
+            parts.append("safe")
+        suffix = f" ({', '.join(parts)})" if parts else ""
         lines.append(f"- {lane['role']} -> {lane['model']} [{lane['state']}]{suffix}")
 
     extras = [model for model in status.get("detected", []) if model not in {row["model"] for row in snapshot["lanes"]}]
@@ -179,8 +214,14 @@ def format_onboarding_guide(session_id="default"):
     status = snapshot["status"]
     context = snapshot["context"]
     summary_counts = snapshot["summary_counts"]
+    hardware = snapshot["hardware"]
     ready_required = [lane["role"] for lane in snapshot["lanes"] if lane["state"] == "ready" and model_registry.MODEL_REGISTRY[lane["role"]]["required"]]
     missing_required = [lane["model"] for lane in snapshot["lanes"] if lane["state"] == "missing required"]
+    fit_warnings = [
+        f"{lane['role']} ({lane['model']}): {FIT_LABELS[lane['fit']['tier']]}"
+        for lane in snapshot["lanes"]
+        if (lane.get("fit") or {}).get("tier") in {"tight", "too_big"}
+    ]
 
     lines = [
         "Onboard",
@@ -188,13 +229,20 @@ def format_onboarding_guide(session_id="default"):
         "",
         "Current Readiness",
         f"- Runtime: {'connected' if status.get('runtime_available') else 'offline'} ({status.get('version') or 'version unknown'})",
+        f"- Detected RAM: {_format_ram(hardware.get('ram'))}",
         f"- Required lanes ready: {', '.join(ready_required) if ready_required else 'none yet'}",
         f"- Missing required models: {', '.join(missing_required) if missing_required else 'none'}",
         f"- Pinned workspace: {context.get('workspace_path') or 'none'}",
         f"- Compact memory entries: facts {summary_counts['facts']}, preferences {summary_counts['preferences']}, open tasks {summary_counts['open_tasks']}",
-        "",
-        "Quick Start",
     ]
+
+    if fit_warnings:
+        lines.append("")
+        lines.append("Hardware Fit Warnings")
+        for warning in fit_warnings:
+            lines.append(f"- {warning}")
+
+    lines.extend(["", "Quick Start"])
 
     step_number = 1
     if not status.get("runtime_available"):

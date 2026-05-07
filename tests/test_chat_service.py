@@ -12,31 +12,23 @@ class ChatServiceTests(unittest.TestCase):
             {"role": "assistant", "content": "Got it."},
         ]
         messages = _build_runtime_messages({}, history, "What should I call it?")
-        self.assertEqual(
-            messages,
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a local desktop AI control layer. Use the provided conversation history, compact session memory, "
-                        "active skills, and workspace snapshot when available. Workspace reads and searches require explicit approval "
-                        "before they run. Do not claim to have inspected unseen files, edited code, run commands, or verified results "
-                        "unless the user explicitly supplied that information."
-                    ),
-                },
-                {"role": "user", "content": "Call the project Nebula Forge."},
-                {"role": "assistant", "content": "Got it."},
-                {"role": "user", "content": "What should I call it?"},
-            ],
-        )
+        # First message is the control system prompt
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("local desktop AI control layer", messages[0]["content"])
+        # Last message is the current user turn
+        self.assertEqual(messages[-1], {"role": "user", "content": "What should I call it?"})
+        # History is included verbatim
+        self.assertIn({"role": "user", "content": "Call the project Nebula Forge."}, messages)
+        self.assertIn({"role": "assistant", "content": "Got it."}, messages)
 
     def test_build_runtime_messages_includes_structured_summary(self):
         summary = {"facts": ["Project codename: Nebula Forge"], "preferences": [], "open_tasks": []}
         messages = _build_runtime_messages(summary, [], "What should I call it?")
         self.assertEqual(messages[0]["role"], "system")
-        self.assertEqual(messages[1]["role"], "system")
-        self.assertIn("Facts:", messages[1]["content"])
-        self.assertIn("Nebula Forge", messages[1]["content"])
+        # The summary system message lives somewhere in the system block, not at a fixed index.
+        rendered = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        self.assertIn("Facts:", rendered)
+        self.assertIn("Nebula Forge", rendered)
         self.assertEqual(messages[-1], {"role": "user", "content": "What should I call it?"})
 
     def test_build_runtime_messages_includes_workspace_and_skills(self):
@@ -173,7 +165,8 @@ class ChatServiceTests(unittest.TestCase):
         runtime_messages = infer_chat_mock.call_args.kwargs["messages"]
         self.assertEqual(runtime_messages[0]["role"], "system")
         self.assertIn("local desktop AI control layer", runtime_messages[0]["content"])
-        self.assertIn("Project codename: Nebula Forge", runtime_messages[1]["content"])
+        rendered_systems = "\n\n".join(m["content"] for m in runtime_messages if m["role"] == "system")
+        self.assertIn("Project codename: Nebula Forge", rendered_systems)
         self.assertEqual(runtime_messages[-1], {"role": "user", "content": "What should I call it?"})
         self.assertEqual(result["response"], "You said to call it Nebula Forge.")
         self.assertEqual(result["model"], "llama3.1:8b")

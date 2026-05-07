@@ -1,3 +1,4 @@
+from app.hardware import summary as hardware_summary
 from app.models import model_registry, install_manager
 from app.models.runtime_client import detect_ollama, get_ollama_version
 
@@ -13,9 +14,70 @@ def get_missing_required_models():
     return get_status().get("missing", [])
 
 
-def ensure_models_installed():
+def ensure_models_installed(progress_callback=None, cancel_event=None):
     installed = [m["model"] for m in model_registry.get_model_status().get("installed", [])]
-    return install_manager.ensure_default_models(installed)
+    return install_manager.ensure_default_models(
+        installed, progress_callback=progress_callback, cancel_event=cancel_event
+    )
+
+
+def install_single_model(target, progress_callback=None, cancel_event=None):
+    installed = {m["model"] for m in model_registry.get_model_status().get("installed", [])}
+    return install_manager.install_model(
+        target,
+        installed_models=installed,
+        progress_callback=progress_callback,
+        cancel_event=cancel_event,
+    )
+
+
+def uninstall_single_model(target):
+    installed = {m["model"] for m in model_registry.get_model_status().get("installed", [])}
+    return install_manager.uninstall_model(target, installed_models=installed)
+
+
+def format_uninstall_result(result):
+    role = result.get("role")
+    model = result.get("model")
+    if not model:
+        return "\n".join(
+            [
+                result.get("output") or "Uninstall failed: unknown target.",
+                "Available roles: " + ", ".join(sorted(model_registry.MODEL_REGISTRY.keys())),
+            ]
+        )
+
+    label = f"{role} ({model})" if role else model
+    if result.get("not_installed"):
+        return f"{label}: not installed."
+    if result.get("success"):
+        return f"Uninstalled {label}."
+    return f"Could not uninstall {label}: {result.get('output') or 'unknown error'}."
+
+
+def format_single_install_result(result):
+    role = result.get("role")
+    model = result.get("model")
+    lines = []
+
+    if not model:
+        lines.append(result.get("output") or "Install failed: unknown target.")
+        lines.append("Available roles: " + ", ".join(sorted(model_registry.MODEL_REGISTRY.keys())))
+        return "\n".join(lines)
+
+    if result.get("already_installed"):
+        label = f"{role} ({model})" if role else model
+        lines.append(f"{label}: already installed.")
+    elif result.get("success"):
+        label = f"{role} -> {model}" if role else model
+        lines.append(f"Installed {label} ({result.get('output') or 'success'}).")
+    else:
+        label = f"{role} ({model})" if role else model
+        lines.append(f"Could not install {label}: {result.get('output') or 'unknown error'}.")
+
+    for warning in result.get("warnings", []):
+        lines.append(f"Warning: {warning}")
+    return "\n".join(lines)
 
 
 def format_status():
@@ -45,6 +107,49 @@ def format_status():
     if extras:
         lines.append(f"Other local models: {', '.join(extras)}")
 
+    return "\n".join(lines)
+
+
+_FIT_LABELS = {
+    "safe": "safe",
+    "tight": "tight",
+    "too_big": "too big",
+    "unknown": "unknown fit",
+}
+
+
+def format_models_overview():
+    """One-stop view: lanes + state + fit vs local RAM + extras."""
+    status = get_status()
+    ram_bytes = hardware_summary().get("ram")
+    fits = model_registry.get_hardware_lane_fit(ram_bytes=ram_bytes)
+    ram_label = f"{ram_bytes / (1024 ** 3):.1f} GB" if ram_bytes else "unknown"
+    lines = [
+        "Registered Lanes",
+        f"Detected RAM: {ram_label}",
+        "",
+    ]
+    installed_names = {entry["model"] for entry in status.get("installed", [])}
+    for role, info in model_registry.MODEL_REGISTRY.items():
+        model = info["model"]
+        if model in installed_names:
+            state = "installed"
+        elif info["required"]:
+            state = "missing required"
+        else:
+            state = "optional"
+        fit_tier = fits.get(role, {}).get("tier", "unknown")
+        required = "required" if info["required"] else "optional"
+        lines.append(
+            f"- {role} [{required}] -> {model} ({info['size_gb']} GB, {_FIT_LABELS[fit_tier]}) [{state}]"
+        )
+
+    registered = {info["model"] for info in model_registry.MODEL_REGISTRY.values()}
+    extras = [m for m in status.get("detected", []) if m not in registered]
+    if extras:
+        lines.extend(["", "Other local models (unmanaged)"])
+        for name in extras:
+            lines.append(f"- {name}")
     return "\n".join(lines)
 
 
