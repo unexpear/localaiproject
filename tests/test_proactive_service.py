@@ -449,15 +449,23 @@ class AutoFireTests(unittest.TestCase):
         ps.set_autofire(True)
         self._seed_active_session()
         called = {"n": 0}
+        responder_called = threading.Event()
 
         def responder(messages):
             called["n"] += 1
+            responder_called.set()
             return '{"patch": null, "reason": "ok"}'
 
         result = ps.maybe_tick_async(self.sid, model_responder=responder)
         self.assertTrue(result)
-        # Wait for the daemon thread to finish.
-        time.sleep(0.2)
+        # Deterministic wait for the daemon to actually invoke the
+        # responder, instead of a timing-sensitive ``sleep(0.2)``
+        # that flaked under CI load. Two seconds is a generous upper
+        # bound — the actual call is sub-millisecond.
+        self.assertTrue(
+            responder_called.wait(timeout=2.0),
+            "daemon thread did not invoke responder within 2s",
+        )
         self.assertEqual(called["n"], 1)
 
     def test_dispatch_input_does_not_block_on_slow_tick(self):
@@ -468,8 +476,13 @@ class AutoFireTests(unittest.TestCase):
 
         slow_done = threading.Event()
 
+        # Widen the gap between "the responder is busy" (1.0s) and
+        # "did the call return promptly?" (< 0.5s). Previously this
+        # tested 0.3s vs 0.15s — too tight under CI load (thread
+        # spawn + lock acquire alone can take 100+ ms). 500 ms still
+        # proves the call returned WAY before the responder finished.
         def slow_responder(_messages):
-            time.sleep(0.3)
+            time.sleep(1.0)
             slow_done.set()
             return '{"patch": null, "reason": "ok"}'
 
@@ -480,11 +493,11 @@ class AutoFireTests(unittest.TestCase):
         ok = ps.maybe_tick_async(self.sid, model_responder=slow_responder)
         elapsed = time.monotonic() - start
 
-        # The async call returned in well under the 0.3s sleep.
+        # The async call returned in well under the 1.0s sleep.
         self.assertTrue(ok)
-        self.assertLess(elapsed, 0.15)
+        self.assertLess(elapsed, 0.5)
         # And the daemon thread will eventually finish.
-        self.assertTrue(slow_done.wait(timeout=2.0))
+        self.assertTrue(slow_done.wait(timeout=3.0))
 
     def test_coalescing_prevents_parallel_ticks(self):
         """Two rapid maybe_tick_async calls must not spawn two
