@@ -310,10 +310,41 @@ def _normalize_workspace_root(workspace_root):
 
 
 def _is_within_workspace(workspace_root, target_path):
+    """Lexical containment check (does NOT resolve symlinks). Use
+    ``_resolve_within_workspace`` for security-relevant gates so a
+    symlinked parent directory pointing outside the workspace
+    can't smuggle a write/read past the boundary."""
     try:
         return os.path.commonpath([workspace_root, target_path]) == workspace_root
     except ValueError:
         return False
+
+
+def _resolve_within_workspace(workspace_root, candidate):
+    """True iff ``candidate`` lies inside ``workspace_root`` AFTER
+    resolving symlinks in BOTH paths. Catches:
+
+    * Lexical traversal (``../../etc``) — same as
+      ``_is_within_workspace``.
+    * Symlink escape via a parent component (``linkdir/file`` where
+      ``linkdir`` is a symlink pointing outside the workspace) —
+      this is the case ``_is_within_workspace`` alone misses,
+      because ``os.path.abspath`` only normalises lexically.
+
+    Belt-and-suspenders: we run BOTH the lexical check (cheap, no
+    filesystem I/O on Windows) AND the realpath check. If either
+    fails, the path is refused. Realpath errors fail closed.
+    """
+    if not _is_within_workspace(workspace_root, candidate):
+        return False
+    try:
+        real_root = os.path.realpath(workspace_root)
+        real_candidate = os.path.realpath(candidate)
+    except OSError:
+        return False
+    if not real_root:
+        return False
+    return _is_within_workspace(real_root, real_candidate)
 
 
 def resolve_workspace_item_path(workspace_root, requested_path):
@@ -330,7 +361,12 @@ def resolve_workspace_item_path(workspace_root, requested_path):
         candidate = os.path.join(root, candidate)
     candidate = os.path.abspath(candidate)
 
-    if not _is_within_workspace(root, candidate):
+    # Use ``_resolve_within_workspace`` so a symlinked parent
+    # component pointing outside the workspace gets refused (Codex
+    # P1: ``linkdir/secret.txt`` where ``linkdir`` is a symlink in
+    # the workspace previously read arbitrary files outside the
+    # workspace because the lexical check passed).
+    if not _resolve_within_workspace(root, candidate):
         return {"ok": False, "error": "outside_workspace", "workspace_path": root}
     if not os.path.exists(candidate):
         return {"ok": False, "error": "path_not_found", "workspace_path": root, "path": candidate}
@@ -1012,7 +1048,12 @@ def resolve_workspace_write_path(workspace_root, requested_path):
         candidate = os.path.join(root, candidate)
     candidate = os.path.abspath(candidate)
 
-    if not _is_within_workspace(root, candidate):
+    # Use ``_resolve_within_workspace`` so a symlinked parent
+    # component pointing outside the workspace gets refused (Codex
+    # P1: ``linkdir/new.txt`` where ``linkdir`` is a symlink would
+    # previously pass the lexical check and let an approved write
+    # land outside the workspace boundary).
+    if not _resolve_within_workspace(root, candidate):
         return {"ok": False, "error": "outside_workspace", "workspace_path": root}
 
     is_symlink = os.path.islink(candidate)

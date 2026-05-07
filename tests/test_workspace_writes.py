@@ -204,6 +204,72 @@ class WorkspaceWritesTests(unittest.TestCase):
         event = dispatch_input("write link.txt <<EOF\nbody\nEOF", session_id="default")
         self.assertEqual(event["reason"], error_vocabulary.SYMLINK_UNSUPPORTED)
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unsupported on this OS")
+    def test_symlinked_parent_directory_escape_refused(self):
+        """Codex P1: writing to ``linkdir/new.txt`` where ``linkdir``
+        is a symlink whose target is OUTSIDE the workspace must be
+        refused. Previously slipped past the lexical containment
+        check because ``os.path.abspath`` does not resolve symlinks
+        in parent components."""
+        outside = tempfile.mkdtemp()
+        link_in_workspace = os.path.join(self.workspace, "linkdir")
+        try:
+            os.symlink(outside, link_in_workspace, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+            self.skipTest("Cannot create symlinks in this environment")
+        try:
+            event = dispatch_input(
+                "write linkdir/escape.txt <<EOF\npwned\nEOF",
+                session_id="default",
+            )
+            self.assertEqual(event["reason"], error_vocabulary.OUTSIDE_WORKSPACE)
+            # And critically, no file landed on disk outside the workspace.
+            self.assertFalse(
+                os.path.exists(os.path.join(outside, "escape.txt")),
+                "symlinked-parent escape DID create a file outside the workspace",
+            )
+        finally:
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+            try:
+                os.unlink(link_in_workspace)
+            except OSError:
+                pass
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unsupported on this OS")
+    def test_symlinked_parent_directory_read_refused(self):
+        """Codex P1 (read side): reading ``linkdir/secret.txt`` where
+        ``linkdir`` is a symlink to outside the workspace must be
+        refused. Previously the lexical check passed and the file
+        was disclosed."""
+        from app.services.workspace_service import resolve_workspace_item_path
+        outside = tempfile.mkdtemp()
+        secret = os.path.join(outside, "secret.txt")
+        with open(secret, "w", encoding="utf-8") as fh:
+            fh.write("CONFIDENTIAL")
+        link_in_workspace = os.path.join(self.workspace, "linkdir")
+        try:
+            os.symlink(outside, link_in_workspace, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+            self.skipTest("Cannot create symlinks in this environment")
+        try:
+            result = resolve_workspace_item_path(
+                self.workspace, "linkdir/secret.txt",
+            )
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"], "outside_workspace")
+        finally:
+            import shutil
+            shutil.rmtree(outside, ignore_errors=True)
+            try:
+                os.unlink(link_in_workspace)
+            except OSError:
+                pass
+
     def test_stale_file_between_propose_and_approve(self):
         target = os.path.join(self.workspace, "race.txt")
         with open(target, "w", encoding="utf-8") as fh:
