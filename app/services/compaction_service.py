@@ -9,11 +9,34 @@ from app.config import (
 from app.memory import local_memory
 from app.models import model_registry, runtime_client
 
+#: System prompt for the compaction model. Substantially expanded over
+#: the original one-paragraph version because small local models (the
+#: ones running compaction) reliably emit generic dreck like
+#: "user discussed code" without explicit good-vs-bad guidance + an
+#: example. The goal is a summary that lets a future turn pick up where
+#: this one left off in 5-15x fewer tokens than the raw transcript —
+#: which means PRESERVING IDENTIFIERS (file paths, function names,
+#: error messages, decisions) rather than abstracting them away.
 SUMMARY_SYSTEM_PROMPT = (
     "You maintain compact conversation memory for a local AI assistant. "
-    "Return strict JSON only with keys facts, preferences, and open_tasks. "
-    "Each value must be an array of short strings. Keep stable facts, user preferences, "
-    "important decisions, and unresolved tasks. Keep it compact and factual."
+    "Produce JSON that lets a future turn pick up where this conversation left off "
+    "in 5-15x fewer tokens than the raw transcript.\n\n"
+    "Strict JSON only with three keys:\n"
+    "- facts: stable, persistent context (tech stack, file paths, component names, decisions made). "
+    "Up to 8 items.\n"
+    "- preferences: how the user wants to be answered (tone, format, approach). Up to 6 items.\n"
+    "- open_tasks: unfinished work or follow-ups. Up to 6 items.\n\n"
+    "Each item: one short sentence. Concrete, not generic. PRESERVE SPECIFIC IDENTIFIERS "
+    "(file paths, function names, error messages, decisions) — they're what makes the memory "
+    "useful next turn.\n\n"
+    "Good vs bad:\n"
+    "  good: \"Debugging OAuth in app/auth.py:142 — JWT decoding throws InvalidSignature\"\n"
+    "  bad:  \"User discussed authentication\"\n"
+    "  good: \"Project uses Postgres + SQLAlchemy; migrations at db/migrations/\"\n"
+    "  bad:  \"Project has a database\"\n\n"
+    "Consolidate, don't enumerate. Three turns about the same bug = ONE fact, not three. "
+    "Drop the obvious — 'user asked a question' is not a fact.\n\n"
+    "Return JSON only. No markdown fences, no explanation."
 )
 
 
@@ -206,10 +229,30 @@ def _generate_summary(existing_summary, history):
         result = runtime_client.infer_chat(model_name, messages=summary_request)
         parsed = _parse_summary_response(result["content"]) if result["ok"] else None
         if parsed is not None:
-            grounded = _normalize_summary(heuristic_summary)
+            # Model-as-primary, heuristic-as-fallback-per-bucket.
+            # The model produces a real consolidated summary; the
+            # heuristic just dumps verbatim user messages by regex
+            # bucket. So when the model returns content for a
+            # bucket, USE IT — even if the heuristic also has
+            # something there, the model's version is consolidated
+            # and identifier-preserving.
+            #
+            # The heuristic still has a job: when the model leaves
+            # a bucket empty, an explicit user statement that the
+            # heuristic caught (e.g., "I prefer concise answers")
+            # shouldn't be lost. So we fill model-empty buckets
+            # from the heuristic.
+            #
+            # Earlier this was inverted (heuristic-as-primary). That
+            # blocked model improvements: a generic heuristic
+            # `facts=["User said X"]` overrode a much better model
+            # `facts=["Debugging OAuth in auth.py:142"]`. Fixed
+            # 2026-05-07.
+            grounded = _normalize_summary(parsed)
+            fallback = _normalize_summary(heuristic_summary)
             for key in grounded:
-                if not grounded[key] and parsed[key]:
-                    grounded[key] = parsed[key]
+                if not grounded[key] and fallback[key]:
+                    grounded[key] = fallback[key]
             return {
                 "ok": True,
                 "summary": grounded,
