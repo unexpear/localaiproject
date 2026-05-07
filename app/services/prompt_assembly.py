@@ -423,6 +423,104 @@ def _filter_applicable_instructions(
     return out
 
 
+def explain_instructions(
+    instructions: Optional[List[Dict[str, Any]]],
+    *,
+    mode: Optional[str] = None,
+    workspace_path: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    lane: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Phase 3a of `docs/design/custom-instructions.md` — per-entry
+    explanation of WHY each instruction did or didn't apply this turn.
+
+    Returns one dict per instruction in the input list (preserving
+    order), each carrying:
+
+    - ``id``, ``label``, ``kind`` — identity
+    - ``status`` — ``"applied"`` | ``"disabled"`` | ``"hushed"`` |
+      ``"filtered"``
+    - ``reason`` — short human-readable explanation. Empty for
+      ``applied``.
+
+    Used by ``prompt show`` to render an "instructions" section
+    after the slot trace, so the user can see why a rule didn't
+    fire (most useful when an applies_to predicate looks right but
+    the instruction silently doesn't apply).
+    """
+    if not instructions:
+        return []
+    session_tags = set(tags or [])
+    out: List[Dict[str, Any]] = []
+    for entry in instructions:
+        if not isinstance(entry, dict):
+            continue
+        info = {
+            "id": entry.get("id") or "",
+            "label": entry.get("label") or "",
+            "kind": entry.get("kind") or "",
+            "status": "applied",
+            "reason": "",
+        }
+        if not entry.get("enabled", True):
+            info["status"] = "disabled"
+            info["reason"] = "disabled by user"
+            out.append(info)
+            continue
+        try:
+            hush_left = int(entry.get("hushed_remaining") or 0)
+        except (TypeError, ValueError):
+            hush_left = 0
+        if hush_left > 0:
+            info["status"] = "hushed"
+            info["reason"] = (
+                f"hushed for {hush_left} more turn"
+                f"{'s' if hush_left != 1 else ''}"
+            )
+            out.append(info)
+            continue
+        applies_to = entry.get("applies_to") or {}
+        if not isinstance(applies_to, dict):
+            applies_to = {}
+        wanted_mode = applies_to.get("mode")
+        if wanted_mode and wanted_mode != (mode or ""):
+            info["status"] = "filtered"
+            info["reason"] = (
+                f"applies_to.mode={wanted_mode!r} but session mode={mode or 'plan'!r}"
+            )
+            out.append(info)
+            continue
+        wanted_ws = applies_to.get("workspace")
+        if wanted_ws and wanted_ws != (workspace_path or ""):
+            display_ws = wanted_ws
+            if len(display_ws) > 32:
+                display_ws = "..." + display_ws[-29:]
+            info["status"] = "filtered"
+            info["reason"] = f"applies_to.workspace={display_ws} not pinned"
+            out.append(info)
+            continue
+        wanted_tags = applies_to.get("tags")
+        if wanted_tags and not session_tags.intersection(wanted_tags):
+            info["status"] = "filtered"
+            info["reason"] = (
+                f"applies_to.tags={','.join(wanted_tags)} "
+                f"but session tags={','.join(sorted(session_tags)) or '(none)'}"
+            )
+            out.append(info)
+            continue
+        wanted_lanes = applies_to.get("lanes")
+        if wanted_lanes and (not lane or lane not in wanted_lanes):
+            info["status"] = "filtered"
+            info["reason"] = (
+                f"applies_to.lanes={','.join(wanted_lanes)} "
+                f"but resolved lane={lane or '(unknown)'!r}"
+            )
+            out.append(info)
+            continue
+        out.append(info)
+    return out
+
+
 def custom_instructions_slot(
     instructions: Optional[List[Dict[str, Any]]],
     *,

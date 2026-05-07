@@ -54,7 +54,7 @@ queued.
 | `design/tool-calling.md`           | ` ```dispatcher` fenced blocks the model emits; one-click approval; multi-call bundles | ✅ Phase 1 + 2 + 3a + 3b shipped |
 | `design/prompt-assembly.md`        | Layered prompt construction with per-slot budgets + provenance | Phase 1+2+3+4 shipped |
 | `design/compact-prompt.md`         | Opt-in dense slot rendering: same info, fewer tokens (off by default) | ✅ Phase 1 shipped |
-| `design/custom-instructions.md`    | Typed/conditional/addressable behavioural rules — better than ChatGPT-style custom instructions | ✅ Phase 1 + 2 + 2.5 shipped |
+| `design/custom-instructions.md`    | Typed/conditional/addressable behavioural rules — better than ChatGPT-style custom instructions | ✅ Phase 1 + 2 + 2.5 + 3a shipped |
 
 ### Orchestration & chat
 

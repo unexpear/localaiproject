@@ -1080,5 +1080,221 @@ class HushIntegrationTests(unittest.TestCase):
         self.assertIn("custom_instructions", names)
 
 
+# ============================================================
+# Phase 3a — explain_instructions + prompt show extension
+# ============================================================
+
+class ExplainInstructionsTests(unittest.TestCase):
+    def _entry(self, **fields):
+        base = {
+            "id": "i_test",
+            "label": "test",
+            "kind": "style",
+            "body": "x.",
+            "enabled": True,
+            "applies_to": {},
+            "priority": 50,
+            "char_limit": 2048,
+            "hushed_remaining": 0,
+        }
+        base.update(fields)
+        return base
+
+    def test_empty_returns_empty(self):
+        self.assertEqual(pa.explain_instructions(None), [])
+        self.assertEqual(pa.explain_instructions([]), [])
+
+    def test_applied_when_no_filters(self):
+        entries = [self._entry()]
+        out = pa.explain_instructions(entries)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["status"], "applied")
+        self.assertEqual(out[0]["reason"], "")
+
+    def test_disabled_status(self):
+        entries = [self._entry(enabled=False)]
+        out = pa.explain_instructions(entries)
+        self.assertEqual(out[0]["status"], "disabled")
+        self.assertIn("disabled", out[0]["reason"])
+
+    def test_hushed_status_with_remaining_count(self):
+        entries = [self._entry(hushed_remaining=3)]
+        out = pa.explain_instructions(entries)
+        self.assertEqual(out[0]["status"], "hushed")
+        self.assertIn("3 more turns", out[0]["reason"])
+
+    def test_hushed_singular_when_one_turn_left(self):
+        entries = [self._entry(hushed_remaining=1)]
+        out = pa.explain_instructions(entries)
+        self.assertIn("1 more turn", out[0]["reason"])
+        # Singular: "turn" not "turns".
+        self.assertNotIn("1 more turns", out[0]["reason"])
+
+    def test_filtered_mode_mismatch(self):
+        entries = [self._entry(applies_to={"mode": "build"})]
+        out = pa.explain_instructions(entries, mode="plan")
+        self.assertEqual(out[0]["status"], "filtered")
+        self.assertIn("mode", out[0]["reason"])
+        self.assertIn("build", out[0]["reason"])
+        self.assertIn("plan", out[0]["reason"])
+
+    def test_filtered_workspace_mismatch(self):
+        entries = [self._entry(applies_to={"workspace": "C:\\repos\\X"})]
+        out = pa.explain_instructions(entries, workspace_path=None)
+        self.assertEqual(out[0]["status"], "filtered")
+        self.assertIn("workspace", out[0]["reason"])
+
+    def test_filtered_workspace_truncated_in_reason(self):
+        long_path = "C:\\very\\long\\workspace\\path\\repos\\my-project\\src"
+        entries = [self._entry(applies_to={"workspace": long_path})]
+        out = pa.explain_instructions(entries, workspace_path=None)
+        # Long paths get truncated with leading "..." for readability.
+        self.assertIn("...", out[0]["reason"])
+
+    def test_filtered_tags_mismatch(self):
+        entries = [self._entry(applies_to={"tags": ["work", "urgent"]})]
+        out = pa.explain_instructions(entries, tags=["personal"])
+        self.assertEqual(out[0]["status"], "filtered")
+        self.assertIn("tags", out[0]["reason"])
+
+    def test_filtered_lanes_mismatch(self):
+        entries = [self._entry(applies_to={"lanes": ["code"]})]
+        out = pa.explain_instructions(entries, lane="vision")
+        self.assertEqual(out[0]["status"], "filtered")
+        self.assertIn("lanes", out[0]["reason"])
+        self.assertIn("code", out[0]["reason"])
+        self.assertIn("vision", out[0]["reason"])
+
+    def test_disabled_takes_precedence_over_filter(self):
+        # If both disabled AND would-be-filtered, show "disabled".
+        entries = [self._entry(
+            enabled=False, applies_to={"mode": "build"},
+        )]
+        out = pa.explain_instructions(entries, mode="plan")
+        self.assertEqual(out[0]["status"], "disabled")
+
+    def test_hushed_takes_precedence_over_filter(self):
+        # If both hushed AND would-be-filtered, show "hushed".
+        entries = [self._entry(
+            hushed_remaining=2, applies_to={"mode": "build"},
+        )]
+        out = pa.explain_instructions(entries, mode="plan")
+        self.assertEqual(out[0]["status"], "hushed")
+
+    def test_preserves_input_order(self):
+        entries = [
+            self._entry(id="i_first"),
+            self._entry(id="i_second"),
+            self._entry(id="i_third"),
+        ]
+        out = pa.explain_instructions(entries)
+        self.assertEqual(
+            [info["id"] for info in out],
+            ["i_first", "i_second", "i_third"],
+        )
+
+    def test_includes_id_label_kind_in_each_entry(self):
+        entries = [self._entry(
+            id="i_tone", label="formal-tone", kind="style",
+        )]
+        out = pa.explain_instructions(entries)
+        self.assertEqual(out[0]["id"], "i_tone")
+        self.assertEqual(out[0]["label"], "formal-tone")
+        self.assertEqual(out[0]["kind"], "style")
+
+
+class PromptShowInstructionsSectionTests(unittest.TestCase):
+    """Phase 3a: `prompt show` renders an instruction explanation
+    section after the slot trace."""
+
+    def test_no_instructions_no_section(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertNotIn("Custom instructions", result["output"])
+
+    def test_applied_entry_shows_in_section(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        local_memory.add_instruction(
+            session_id=sid, kind="constraint",
+            body="Never edit migrations.", label="no-mig",
+        )
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertIn("Custom instructions", result["output"])
+        self.assertIn("APPLIED", result["output"])
+        self.assertIn("no-mig", result["output"])
+
+    def test_filtered_entry_shows_with_reason(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        local_memory.add_instruction(
+            session_id=sid, kind="style",
+            body="Reply with checklist.",
+            applies_to={"mode": "build"},
+        )
+        # Default mode is plan — so the build-only entry is filtered.
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertIn("FILTERED", result["output"])
+        self.assertIn("mode", result["output"])
+
+    def test_hushed_entry_shows_with_countdown(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        created = local_memory.add_instruction(
+            session_id=sid, kind="style", body="x.",
+        )
+        local_memory.hush_instruction(
+            session_id=sid, instruction_id=created["id"], turns=4,
+        )
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertIn("HUSHED", result["output"])
+        self.assertIn("4 more turns", result["output"])
+
+    def test_disabled_entry_shows_in_section(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        created = local_memory.add_instruction(
+            session_id=sid, kind="style", body="x.",
+        )
+        local_memory.set_instruction_enabled(
+            session_id=sid, instruction_id=created["id"], enabled=False,
+        )
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertIn("DISABLED", result["output"])
+
+    def test_section_header_counts_each_status(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        local_memory.add_instruction(session_id=sid, kind="style", body="A.")
+        local_memory.add_instruction(
+            session_id=sid, kind="style", body="B.",
+            applies_to={"mode": "build"},
+        )
+        c = local_memory.add_instruction(session_id=sid, kind="style", body="C.")
+        local_memory.hush_instruction(
+            session_id=sid, instruction_id=c["id"], turns=2,
+        )
+        d = local_memory.add_instruction(session_id=sid, kind="style", body="D.")
+        local_memory.set_instruction_enabled(
+            session_id=sid, instruction_id=d["id"], enabled=False,
+        )
+        result = dispatch_input("prompt show", session_id=sid)
+        # Header reads: "Custom instructions (1 applied, 1 filtered, 1 hushed, 1 disabled):"
+        self.assertIn("1 applied", result["output"])
+        self.assertIn("1 filtered", result["output"])
+        self.assertIn("1 hushed", result["output"])
+        self.assertIn("1 disabled", result["output"])
+
+    def test_result_carries_both_trace_and_instructions(self):
+        sid = _fresh_session()
+        local_memory.clear_instructions(session_id=sid)
+        local_memory.add_instruction(session_id=sid, kind="style", body="A.")
+        result = dispatch_input("prompt show", session_id=sid)
+        self.assertIn("trace", result["result"])
+        self.assertIn("instructions", result["result"])
+        self.assertEqual(len(result["result"]["instructions"]), 1)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

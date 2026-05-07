@@ -1,6 +1,6 @@
 # Design: Custom Instructions
 
-**Status: Phase 1 + minimal Phase 2 + Phase 2.5 shipped · 2026-05-07**
+**Status: Phase 1 + minimal Phase 2 + Phase 2.5 + Phase 3a shipped · 2026-05-07**
 
 ChatGPT-style "custom instructions" — except **typed, conditional,
 addressable, and per-session.** A first-class CRUD-able list of named
@@ -362,11 +362,61 @@ Phase 2.5 test count: 32 new tests in
   `build_runtime_assembly`, returns after the right number
   of ticks.
 
-### Phase 3 — Surface integration (planned)
+### Phase 3a ✅ shipped (this doc)
 
-- Qt panel: list of cards with toggle, edit, condition badge.
-- `prompt show` extension: include filtered-out instructions under
-  "Filtered (didn't apply this turn)" with the reason.
+`prompt show` now renders a per-instruction explanation section
+after the slot trace, so users can see at a glance why a rule
+did or didn't fire this turn:
+
+```
+Prompt assembly (next turn):
+  control                 prio=0    chars=376
+  mode                    prio=0    chars=287
+  custom_instructions     prio=3    chars=72/8192
+  ...
+
+Custom instructions (1 applied, 2 filtered, 1 hushed, 0 disabled):
+  i_a8f3      [constraint] no-mig                   APPLIED
+  i_b1c2      [style     ] tone                     FILTERED  (applies_to.mode='build' but session mode='plan')
+  i_c2d3      [knowledge ] stack                    FILTERED  (applies_to.workspace=C:\\repos\\X not pinned)
+  i_d4e5      [constraint] tests                    HUSHED    (hushed for 2 more turns)
+```
+
+Implementation: a new pure helper
+``prompt_assembly.explain_instructions(instructions, *, mode,
+workspace_path, tags, lane)`` returns one dict per entry with
+``status`` ∈ ``{"applied", "disabled", "hushed", "filtered"}``
+plus a short ``reason`` (empty for ``applied``).
+
+Precedence when multiple disqualifications could apply:
+``disabled`` > ``hushed`` > ``filtered``. So a disabled rule
+that *would also* be mode-filtered shows as ``DISABLED``, not
+``FILTERED``.
+
+The dispatcher's ``result["result"]`` shape evolved from a flat
+trace list to ``{"trace": [...], "instructions": [...]}``.
+Existing tests only consume ``result["output"]`` (verified via
+grep before changing); no callers needed updates.
+
+Lane filtering note: ``prompt show`` runs without actually
+routing the message, so the resolved lane is always None and
+lane-filtered entries always appear as FILTERED with reason
+``resolved lane=(unknown)``. To see lane filtering in action,
+trigger an actual chat turn and inspect the next ``prompt
+show`` (after the router has run, the entry's status reflects
+the real lane). A future Phase 3b could route a synthetic
+message for preview purposes.
+
+21 new tests in `tests/test_custom_instructions.py` (109
+total): 14 `ExplainInstructionsTests` + 7
+`PromptShowInstructionsSectionTests`.
+
+### Phase 3b — Qt panel (planned)
+
+- List of cards with toggle, edit, condition badge.
+- Status indicator per card (applied / hushed / filtered with
+  the same reason text).
+- Drag-to-reorder for priority.
 
 ### Phase 4 — Promotion + bulk ops (planned)
 

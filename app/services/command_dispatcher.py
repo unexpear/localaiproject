@@ -3107,7 +3107,21 @@ def _handle_prompt_command(text, session_id):
         _, trace = chat_service.build_runtime_assembly(
             summary, history, "", session_context=ctx, session_id=session_id,
         )
-        if not trace:
+
+        # Phase 3a of custom-instructions.md — per-entry explanation
+        # of why each instruction did or didn't apply this turn. We
+        # don't have a resolved lane outside of an actual chat turn,
+        # so the lane filter shows as "not yet routed" rather than
+        # firing arbitrarily.
+        instruction_explanation = pa.explain_instructions(
+            ctx.get("instructions") or [],
+            mode=ctx.get("mode"),
+            workspace_path=ctx.get("workspace_path"),
+            tags=ctx.get("tags") or [],
+            lane=None,  # `prompt show` doesn't route — lane filters won't fire
+        )
+
+        if not trace and not instruction_explanation:
             output = "No slots would render for this session."
         else:
             lines = ["Prompt assembly (next turn):"]
@@ -3129,12 +3143,49 @@ def _handle_prompt_command(text, session_id):
             if footer:
                 lines.append("")
                 lines.append(footer)
+            if instruction_explanation:
+                # Group by status so the user can see the applied set
+                # at a glance, then the muted/filtered tail with the
+                # reason each one didn't fire.
+                applied = [i for i in instruction_explanation if i["status"] == "applied"]
+                disabled = [i for i in instruction_explanation if i["status"] == "disabled"]
+                hushed = [i for i in instruction_explanation if i["status"] == "hushed"]
+                filtered = [i for i in instruction_explanation if i["status"] == "filtered"]
+                lines.append("")
+                lines.append(
+                    f"Custom instructions ({len(applied)} applied, "
+                    f"{len(filtered)} filtered, {len(hushed)} hushed, "
+                    f"{len(disabled)} disabled):"
+                )
+                for info in applied:
+                    lines.append(
+                        f"  {info['id']:<11} [{info['kind']:<10}] "
+                        f"{info['label']:<24} APPLIED"
+                    )
+                for info in filtered:
+                    lines.append(
+                        f"  {info['id']:<11} [{info['kind']:<10}] "
+                        f"{info['label']:<24} FILTERED  ({info['reason']})"
+                    )
+                for info in hushed:
+                    lines.append(
+                        f"  {info['id']:<11} [{info['kind']:<10}] "
+                        f"{info['label']:<24} HUSHED    ({info['reason']})"
+                    )
+                for info in disabled:
+                    lines.append(
+                        f"  {info['id']:<11} [{info['kind']:<10}] "
+                        f"{info['label']:<24} DISABLED  ({info['reason']})"
+                    )
             output = "\n".join(lines)
         return {
             "action": "prompt",
             "session_id": session_id,
             "output": output,
-            "result": trace,
+            "result": {
+                "trace": trace,
+                "instructions": instruction_explanation,
+            },
         }
 
     if sub == "limits":
