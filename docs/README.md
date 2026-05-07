@@ -15,6 +15,7 @@ For someone joining the project cold:
 5. `api/goals.md` — durable goal verbs vs raw primitives
 6. `../learnings/README.md` — how skill recipes work
 7. `design/*.md` — designs for items not yet shipped
+8. `CREDITS.md` — external projects whose ideas shaped this codebase
 
 ## Reference (already shipped)
 
@@ -81,22 +82,31 @@ queued.
   Foundry theme design pass
 - `../app/ui/themes_qss/foundry.qss` — the QSS spec for the Qt UI
 
-## Influences
+## Credits
 
-Specific projects whose ideas have been adapted into this codebase.
-Crediting them in one place so future readers can trace where each
-design pattern came from.
+External projects whose ideas shaped this codebase live in
+[`CREDITS.md`](CREDITS.md). Patterns adapted, not code — but the
+right thing to do is to acknowledge where the thinking came from.
+Currently credits **OpenCode**, **Sandcastle**, **Letta**, **Hermes
+Agent**, and **Abacus AI Desktop**.
 
-| Project | Adapted ideas | Where it lives in our docs |
-|---------|--------------|----------------------------|
-| **Abacus AI Desktop** | Multi-surface workflow integration, multi-provider chat, CoWork mode, extensibility umbrella | `vision/surfaces.md`, `design/chat-providers.md`, `design/cowork-mode.md`, `design/extensibility.md` |
-| **OpenCode** | Plan/Build mode, `@file` mention expansion, custom slash commands, undo/redo | `architecture.md` §OpenCode-inspired features (shipped) |
-| **Sandcastle** ([mattpocock/sandcastle](https://github.com/mattpocock/sandcastle)) | `iterate_until_complete` with `<task-complete>` marker (✅ shipped), branch strategy (head/merge-to-head/branch ✅ shipped), sub-task lifecycle hooks (✅ shipped), dispatcher-command expressions in templates, backlog adapters (✅ shipped Phase 1), per-iteration git worktrees | `api/goals.md` (shipped), `design/cowork-mode.md` Phase 5 (shipped), `design/workspace-writes.md` Phase 1.5 (shipped), `design/workflow-templates.md` Phase 2, `design/extensibility.md` §8 (shipped Phase 1), `design/sandbox.md` Phase 4 |
-| **Letta** ([letta-ai/letta](https://github.com/letta-ai/letta), formerly MemGPT) | Structured memory blocks (multiple labelled, length-bounded, separately-editable units instead of one blob), sleep-time consolidation as a latency-tolerant CoWork hook, recall memory as searchable session history, shared memory blocks for planner↔builder coordination | `design/notes-buffer.md` Phase 2 + 3, `design/cowork-mode.md` Phase 7, `design/recall-memory.md` (new) |
-| **Hermes Agent** ([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)) | Portable SKILL.md format aligned with [agentskills.io](https://agentskills.io), layered prompt assembly with explicit slot producers + per-slot budgets + provenance, pluggable execution backends (in-process / git worktree / Docker), provider-runtime resolver consolidation | `design/workflow-templates.md` Phase 5 (new), `design/prompt-assembly.md` (new), `design/cowork-mode.md` Phase 6, `design/chat-providers.md` Phase 6 |
-| **rs-sdk** ("a failed 5-minute run wastes more time than five 30-second diagnostic runs") | Batch-sizing aphorism guiding the agent workflow rules | `../AGENTS.md` §2 |
-| **Local AI Workbench** (user's other Tkinter project at `C:\Users\micha\Desktop\ttttttttttttttttttttttttttttt`) | Cross-workspace path-leakage audit (✅), cancellation-token pattern (✅), typed pipeline reports (✅), naive-bayes lane classifier + live blend (✅), BM25 retrieval index + prompt-slot integration (✅) | `design/workspace-writes.md` Phase 3.5 (✅), `design/cowork-mode.md` Phase 5.5 + 5.6 (✅), `design/agent-rules.md` Phase 5a + 5b (✅), `design/recall-memory.md` Phase 2a + 2b (✅) |
-| **Personal App** (user's self-modifying browser agent at `C:\Users\micha\Desktop\personal app`) | Typed patch taxonomy (7 kinds), L1/L2/L3 friction tiers, atomic bundle approval, "honest null" proactive trigger pattern, shell-generated impact statements (not model-generated) | `design/patch-taxonomy.md` (new), `design/agent-rules.md`, `design/workspace-writes.md` Phase 4 |
+(The single batch-sizing aphorism from `rs-sdk` — "a failed 5-minute
+run wastes more time than five 30-second diagnostic runs" — stays
+credited inline at its point of use in `../AGENTS.md` §2 rather
+than as a top-level credit; it's a quote, not an architecture
+adoption.)
+
+## Internal lineage
+
+The user's own earlier projects whose patterns landed here. Not a
+credit (you don't credit yourself) — kept here only as a traceability
+note so a future reader who recognises a pattern can find the
+original.
+
+| Project | Patterns landed here | Where they live |
+|---------|----------------------|------------------|
+| **Local AI Workbench** (user's earlier Tkinter project) | Cross-workspace path-leakage audit, cancellation-token pattern, typed pipeline reports, naive-bayes lane classifier + live blend, BM25 retrieval index + prompt-slot integration | `design/workspace-writes.md` Phase 3.5 (✅), `design/cowork-mode.md` Phase 5.5 + 5.6 (✅), `design/agent-rules.md` Phase 5a + 5b (✅), `design/recall-memory.md` Phase 2a + 2b (✅) |
+| **Personal App** (user's self-modifying browser agent) | Typed patch taxonomy (7 kinds), L1/L2/L3 friction tiers, atomic bundle approval, "honest null" proactive trigger pattern, shell-generated impact statements (not model-generated) | `design/patch-taxonomy.md` (new), `design/agent-rules.md`, `design/workspace-writes.md` Phase 4 |
 
 ## Conventions
 
