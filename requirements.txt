@@ -1,0 +1,6 @@
+requests
+psutil
+PySide6>=6.6
+qt-material>=2.14
+qdarkstyle>=3.2
+duckdb>=1.0

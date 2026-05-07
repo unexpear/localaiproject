@@ -1,0 +1,20 @@
+# Morning standup template — see `docs/design/workflow-templates.md`.
+# Run with: `template run morning-standup`
+#
+# Compacts memory, lists overnight task failures, and jots a note
+# header for today. No params required.
+
+id = "morning-standup"
+description = "Compact memory, list overnight task failures, start a notes header for today"
+
+[[steps]]
+kind = "command"
+cmd = "compact"
+
+[[steps]]
+kind = "command"
+cmd = "tasks failed"
+
+[[steps]]
+kind = "command"
+cmd = "notes append ## {date}\n- inbox checked\n- failures triaged: see `tasks failed` output"

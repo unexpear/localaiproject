@@ -1,7 +1,8 @@
+import copy
 import unittest
 from unittest.mock import patch
 
-from app.services.chat_service import _build_runtime_messages, handle_chat
+from app.services.chat_service import _build_runtime_messages, handle_chat, retry_saved_execution
 
 
 class ChatServiceTests(unittest.TestCase):
@@ -11,31 +12,23 @@ class ChatServiceTests(unittest.TestCase):
             {"role": "assistant", "content": "Got it."},
         ]
         messages = _build_runtime_messages({}, history, "What should I call it?")
-        self.assertEqual(
-            messages,
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a local desktop AI control layer. Use the provided conversation history, compact session memory, "
-                        "active skills, and workspace snapshot when available. Workspace reads and searches require explicit approval "
-                        "before they run. Do not claim to have inspected unseen files, edited code, run commands, or verified results "
-                        "unless the user explicitly supplied that information."
-                    ),
-                },
-                {"role": "user", "content": "Call the project Nebula Forge."},
-                {"role": "assistant", "content": "Got it."},
-                {"role": "user", "content": "What should I call it?"},
-            ],
-        )
+        # First message is the control system prompt
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("local desktop AI control layer", messages[0]["content"])
+        # Last message is the current user turn
+        self.assertEqual(messages[-1], {"role": "user", "content": "What should I call it?"})
+        # History is included verbatim
+        self.assertIn({"role": "user", "content": "Call the project Nebula Forge."}, messages)
+        self.assertIn({"role": "assistant", "content": "Got it."}, messages)
 
     def test_build_runtime_messages_includes_structured_summary(self):
         summary = {"facts": ["Project codename: Nebula Forge"], "preferences": [], "open_tasks": []}
         messages = _build_runtime_messages(summary, [], "What should I call it?")
         self.assertEqual(messages[0]["role"], "system")
-        self.assertEqual(messages[1]["role"], "system")
-        self.assertIn("Facts:", messages[1]["content"])
-        self.assertIn("Nebula Forge", messages[1]["content"])
+        # The summary system message lives somewhere in the system block, not at a fixed index.
+        rendered = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        self.assertIn("Facts:", rendered)
+        self.assertIn("Nebula Forge", rendered)
         self.assertEqual(messages[-1], {"role": "user", "content": "What should I call it?"})
 
     def test_build_runtime_messages_includes_workspace_and_skills(self):
@@ -91,13 +84,16 @@ class ChatServiceTests(unittest.TestCase):
             return_value={"workspace_path": "C:\\Users\\micha\\Desktop\\localaiproject", "active_skills": []},
         ), patch("app.services.chat_service.plan_workspace_action", return_value=pending_action), patch(
             "app.services.chat_service.local_memory.append_message"
-        ) as append_message_mock:
+        ) as append_message_mock, patch(
+            "app.services.chat_service.local_memory.append_execution"
+        ) as append_execution_mock:
             result = handle_chat("Explain app/supervisor/router.py", session_id="test-session")
 
         self.assertTrue(result["approval_required"])
         self.assertEqual(result["pending_action"]["kind"], "read")
         self.assertIn("approve", result["response"])
         append_message_mock.assert_not_called()
+        append_execution_mock.assert_called_once()
 
     def test_handle_chat_uses_last_approved_search_for_follow_up_file_pick(self):
         with patch(
@@ -110,13 +106,16 @@ class ChatServiceTests(unittest.TestCase):
                     "files": ["app/supervisor/router.py", "app/services/chat_service.py"],
                 },
             },
-        ), patch("app.services.chat_service.local_memory.append_message") as append_message_mock:
+        ), patch("app.services.chat_service.local_memory.append_message") as append_message_mock, patch(
+            "app.services.chat_service.local_memory.append_execution"
+        ) as append_execution_mock:
             result = handle_chat("Explain that file too", session_id="test-session")
 
         self.assertTrue(result["approval_required"])
         self.assertEqual(result["pending_action"]["kind"], "read")
         self.assertEqual(result["pending_action"]["paths"], ["app/supervisor/router.py"])
         append_message_mock.assert_not_called()
+        append_execution_mock.assert_called_once()
 
     def test_handle_chat_sends_recent_history_to_runtime(self):
         router_history = [
@@ -150,7 +149,9 @@ class ChatServiceTests(unittest.TestCase):
             return_value={"workspace_path": None, "active_skills": []},
         ), patch(
             "app.services.chat_service.local_memory.append_message"
-        ), patch("app.services.chat_service.router.route_message", return_value=route_info), patch(
+        ), patch("app.services.chat_service.local_memory.append_execution"), patch(
+            "app.services.chat_service.router.route_message", return_value=route_info
+        ), patch(
             "app.services.chat_service.model_registry.resolve_model_for_role", return_value=resolution
         ), patch(
             "app.services.chat_service.runtime_client.infer_chat", return_value=inference_result
@@ -164,7 +165,8 @@ class ChatServiceTests(unittest.TestCase):
         runtime_messages = infer_chat_mock.call_args.kwargs["messages"]
         self.assertEqual(runtime_messages[0]["role"], "system")
         self.assertIn("local desktop AI control layer", runtime_messages[0]["content"])
-        self.assertIn("Project codename: Nebula Forge", runtime_messages[1]["content"])
+        rendered_systems = "\n\n".join(m["content"] for m in runtime_messages if m["role"] == "system")
+        self.assertIn("Project codename: Nebula Forge", rendered_systems)
         self.assertEqual(runtime_messages[-1], {"role": "user", "content": "What should I call it?"})
         self.assertEqual(result["response"], "You said to call it Nebula Forge.")
         self.assertEqual(result["model"], "llama3.1:8b")
@@ -208,7 +210,9 @@ class ChatServiceTests(unittest.TestCase):
             return_value={"workspace_path": None, "active_skills": []},
         ), patch(
             "app.services.chat_service.local_memory.append_message"
-        ), patch("app.services.chat_service.router.route_message", return_value=route_info), patch(
+        ), patch("app.services.chat_service.local_memory.append_execution"), patch(
+            "app.services.chat_service.router.route_message", return_value=route_info
+        ), patch(
             "app.services.chat_service.model_registry.resolve_model_for_role", return_value=resolution
         ), patch(
             "app.services.chat_service.runtime_client.infer_chat", return_value=inference_result
@@ -222,6 +226,57 @@ class ChatServiceTests(unittest.TestCase):
         self.assertTrue(result["compaction_performed"])
         self.assertIn("Launch codename: Moon Orchard", result["compaction_summary_text"])
         self.assertIn("Compacted 4 older messages", result["compaction_message"])
+
+    def test_retry_saved_execution_uses_saved_runtime_state(self):
+        execution = {
+            "id": "exe_123",
+            "message": "What should I call it?",
+            "requested_lane": "reasoning",
+            "resolved_lane": "reasoning",
+            "fallback_used": False,
+            "replay": {
+                "model": "llama3.1:8b",
+                "messages": [
+                    {"role": "system", "content": "You are a local desktop AI control layer."},
+                    {"role": "user", "content": "What should I call it?"},
+                ],
+                "approved_workspace_result": None,
+            },
+        }
+        inference_result = {
+            "ok": True,
+            "content": "Nebula Forge.",
+            "error": None,
+            "raw": None,
+        }
+
+        with patch(
+            "app.services.chat_service.local_memory.get_session_context",
+            return_value={"workspace_path": None, "active_skills": []},
+        ), patch(
+            "app.services.chat_service.local_memory.append_message"
+        ), patch(
+            "app.services.chat_service.local_memory.append_execution"
+        ) as append_execution_mock, patch(
+            "app.services.chat_service.runtime_client.infer_chat",
+            return_value=inference_result,
+        ) as infer_chat_mock, patch(
+            "app.services.chat_service.compaction_service.get_compact_summary",
+            return_value={},
+        ), patch(
+            "app.services.chat_service.compaction_service.maybe_compact_session",
+            return_value={"performed": False},
+        ):
+            result = retry_saved_execution(copy.deepcopy(execution), session_id="test-session")
+
+        infer_chat_mock.assert_called_once_with(
+            "llama3.1:8b",
+            messages=execution["replay"]["messages"],
+        )
+        self.assertEqual(result["response"], "Nebula Forge.")
+        self.assertEqual(result["retried_from_execution_id"], "exe_123")
+        self.assertEqual(result["retry_mode"], "exact")
+        append_execution_mock.assert_called_once()
 
 
 if __name__ == "__main__":

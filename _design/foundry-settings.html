@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Foundry · Settings · Theme Editor</title>
+<style>
+  /* Foundry · Settings dialog · 720 × 560 */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #0e0f11;
+    color: #D8D4CC;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 60px; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+  .modal {
+    width: 720px; height: 560px;
+    background: #1A1C1F;
+    border: 1px solid #3A3E44;
+    border-radius: 4px;
+    box-shadow: 0 30px 80px -10px rgba(0,0,0,0.6), 0 0 0 1px #0a0b0c inset;
+    display: grid;
+    grid-template-rows: 38px 1fr 56px;
+    overflow: hidden;
+    position: relative;
+  }
+  .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: #2F3338; }
+
+  /* Title bar */
+  .titlebar {
+    background: #16181B;
+    border-bottom: 1px solid #0A0B0C;
+    display: grid; grid-template-columns: auto 1fr auto;
+    align-items: center;
+    padding: 0 18px;
+  }
+  .brand {
+    font-weight: 600; font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: #D8D4CC;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .brand .led {
+    width: 6px; height: 6px; border-radius: 50%; background: #6B6457;
+  }
+  .titlebar .crumb {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: #6B6457; text-align: center;
+  }
+  .titlebar .crumb .accent { color: #D8D4CC; }
+  .titlebar .x {
+    font-family: monospace; color: #6B6457; font-size: 16px; cursor: pointer;
+    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 2px;
+  }
+  .titlebar .x:hover { color: #B43A3A; border-color: #B43A3A; }
+
+  /* Body */
+  .body {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    overflow: hidden;
+  }
+
+  /* Sidebar (preset list) */
+  .sidebar {
+    background: #16181B;
+    border-right: 1px solid #0A0B0C;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+  .section-label {
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6B6457; padding: 12px 22px 6px; font-weight: 500;
+  }
+  .preset {
+    display: grid;
+    grid-template-columns: 4px 1fr auto;
+    align-items: center;
+    padding: 8px 16px 8px 4px;
+    column-gap: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #A39E94;
+    cursor: pointer;
+    border-bottom: 1px dotted #24272B;
+  }
+  .preset .marker { width: 4px; height: 24px; background: transparent; }
+  .preset.selected { background: #1F2226; color: #D8D4CC; }
+  .preset.selected .marker { background: #F56600; }
+  .preset .name { font-family: 'Inter', sans-serif; font-weight: 500; font-size: 12px; letter-spacing: 0.04em; }
+  .preset.selected .name { color: #D8D4CC; }
+  .preset .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: #6B6457; padding: 1px 5px; border: 1px solid #2F3338; border-radius: 1px;
+  }
+  .preset.active-mark .badge { color: #F56600; border-color: rgba(245,102,0,0.5); }
+  .preset.builtin .badge2 {
+    font-size: 9px; color: #6B6457; letter-spacing: 0.12em; margin-left: 8px;
+    text-transform: uppercase; font-family: 'Inter', sans-serif;
+  }
+
+  /* Editor pane */
+  .editor {
+    overflow-y: auto;
+    padding: 24px 28px 20px;
+    background: #1A1C1F;
+  }
+  .editor-head {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: end; padding-bottom: 14px;
+    border-bottom: 1px solid #2F3338;
+    margin-bottom: 18px;
+  }
+  .editor-head .title {
+    font-family: 'Inter', sans-serif;
+    font-size: 18px; font-weight: 500; color: #D8D4CC;
+    letter-spacing: -0.005em;
+  }
+  .editor-head .sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: #6B6457; margin-top: 2px;
+  }
+  .editor-head .sub .accent { color: #F56600; }
+  .editor-head .active-pill {
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #F56600;
+    border: 1px solid rgba(245,102,0,0.5);
+    padding: 5px 10px; border-radius: 2px;
+  }
+
+  /* Form rows */
+  .form {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    column-gap: 18px;
+    row-gap: 14px;
+    margin-bottom: 18px;
+  }
+  .form .k {
+    font-family: 'Inter', sans-serif;
+    font-size: 10pt; letter-spacing: 0.18em;
+    text-transform: uppercase; color: #6B6457;
+    padding-top: 8px;
+  }
+  .form .v { display: flex; align-items: center; gap: 8px; }
+  .combo {
+    flex: 1;
+    background: #1F2226;
+    color: #D8D4CC;
+    border: 1px solid #3A3E44;
+    border-radius: 2px;
+    padding: 6px 12px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    height: 30px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .combo .car { color: #6B6457; font-family: monospace; }
+  .combo:hover { border-color: #6B6457; }
+
+  /* Kind-specific options panel */
+  .options-panel {
+    background: #16181B;
+    border: 1px solid #0A0B0C;
+    border-radius: 2px;
+    padding: 18px 22px;
+    margin-bottom: 18px;
+  }
+  .options-panel .panel-label {
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6B6457; margin-bottom: 12px; font-weight: 500;
+  }
+  .options-panel .qss-editor {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: #0F1113;
+    color: #D8D4CC;
+    border: 1px solid #2F3338;
+    border-radius: 2px;
+    padding: 10px 14px;
+    line-height: 1.5;
+    height: 160px;
+    overflow: hidden;
+    white-space: pre;
+  }
+  .qss-editor .key { color: #F56600; }
+  .qss-editor .sel { color: #93b88a; }
+  .qss-editor .val { color: #D8D4CC; }
+  .qss-editor .com { color: #6B6457; }
+
+  /* Action row */
+  .footer {
+    background: #16181B;
+    border-top: 1px solid #0A0B0C;
+    padding: 0 18px;
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    align-items: center;
+    gap: 8px;
+  }
+  .pill {
+    height: 30px; padding: 0 16px;
+    background: transparent; color: #D8D4CC;
+    border: 1px solid #3A3E44;
+    border-radius: 2px;
+    font-family: 'Inter', sans-serif;
+    font-size: 10pt; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .pill:hover { color: #F56600; border-color: #F56600; }
+  .pill.danger { color: #b09a9a; border-color: #4a3a3a; }
+  .pill.danger:hover { color: #B43A3A; border-color: #B43A3A; }
+  .pill.primary {
+    background: #F56600; color: #1A1C1F;
+    border: none; font-weight: 700;
+    padding: 0 22px;
+  }
+  .pill.primary:hover { background: #ff7d22; }
+
+  .caption {
+    margin-top: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #5a5750;
+    text-align: center;
+    width: 720px;
+  }
+  .caption strong { color: #D8D4CC; }
+  .caption .accent { color: #F56600; }
+</style>
+</head>
+<body>
+
+<div style="display: flex; flex-direction: column; align-items: center;">
+
+<div class="modal">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="brand">
+      <span class="led"></span>
+      Settings
+    </div>
+    <div class="crumb">
+      <span>Local AI Control Layer</span> <span style="color:#4a4d52">·</span> <span class="accent">Theme Editor</span>
+    </div>
+    <div class="x">×</div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="section-label">Built-in</div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Default</div>
+        </div>
+        <div class="badge">native</div>
+      </div>
+
+      <div class="preset selected active-mark">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Foundry</div>
+        </div>
+        <div class="badge">active</div>
+      </div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Material Dark Teal</div>
+        </div>
+        <div class="badge">qt-mat</div>
+      </div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Material Light Blue</div>
+        </div>
+        <div class="badge">qt-mat</div>
+      </div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">QDarkStyle Dark</div>
+        </div>
+        <div class="badge">qdark</div>
+      </div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">QDarkStyle Light</div>
+        </div>
+        <div class="badge">qdark</div>
+      </div>
+
+      <div class="section-label">Personal</div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Foundry · oxblood</div>
+        </div>
+        <div class="badge">qss</div>
+      </div>
+
+      <div class="preset">
+        <div class="marker"></div>
+        <div>
+          <div class="name">Atelier · paper</div>
+        </div>
+        <div class="badge">qss</div>
+      </div>
+
+    </div>
+
+    <!-- Editor -->
+    <div class="editor">
+
+      <div class="editor-head">
+        <div>
+          <div class="title">Foundry</div>
+          <div class="sub">qss_file · <span style="color:#D8D4CC">themes_qss/foundry.qss</span> · <span class="accent">read-only built-in</span></div>
+        </div>
+        <div class="active-pill">Active</div>
+      </div>
+
+      <!-- Form -->
+      <div class="form">
+        <div class="k">Preset</div>
+        <div class="v">
+          <div class="combo"><span>Foundry</span><span class="car">▾</span></div>
+        </div>
+
+        <div class="k">Kind</div>
+        <div class="v">
+          <div class="combo"><span>qss_file</span><span class="car">▾</span></div>
+        </div>
+
+        <div class="k">Source</div>
+        <div class="v">
+          <div class="combo"><span>foundry.qss</span><span class="car">▾</span></div>
+        </div>
+      </div>
+
+      <!-- Live QSS preview (read-only, syntax-tinted) -->
+      <div class="options-panel">
+        <div class="panel-label">QSS · preview · 218 lines</div>
+        <div class="qss-editor"><span class="com">/* FOUNDRY · Local AI Control Layer · QSS theme */</span>
+<span class="sel">QMainWindow, QDialog</span> {
+    <span class="key">background</span>: <span class="val">#1A1C1F</span>;
+    <span class="key">color</span>: <span class="val">#D8D4CC</span>;
+}
+<span class="sel">QWidget</span> {
+    <span class="key">font-family</span>: <span class="val">"Inter", system-ui</span>;
+    <span class="key">selection-background-color</span>: <span class="val">#F56600</span>;
+}
+<span class="sel">QPushButton</span>[<span class="key">role</span>=<span class="val">"primary"</span>] {
+    <span class="key">background</span>: <span class="val">#F56600</span>;
+    <span class="key">color</span>: <span class="val">#1A1C1F</span>;
+    <span class="key">font-weight</span>: <span class="val">700</span>;
+}
+<span class="sel">QListWidget::item:selected</span> {
+    <span class="key">border-left</span>: <span class="val">4px solid #F56600</span>;
+}</div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <button class="pill">Preview</button>
+    <div></div>
+    <button class="pill">Save as…</button>
+    <button class="pill primary">Set as active</button>
+  </div>
+
+</div>
+
+<div class="caption">
+  <strong>Foundry · Settings</strong> · 720 × 560 · built-in presets are <span style="color:#D8D4CC">read-only</span> — clone via <span class="accent">Save as</span>
+</div>
+
+</div>
+
+</body>
+</html>

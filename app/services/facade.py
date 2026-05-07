@@ -1,12 +1,11 @@
-# Service layer for UI decoupling
-
-from app.models.runtime_client import detect_ollama, list_ollama_models, run_model
-from app.models.install_manager import ensure_default_models
-from app.memory.local_memory import append_message, load_memory
-from app.supervisor.router import route
-from app.models.model_registry import get_model_for_role
 from app.hardware import summary as hardware_summary
+from app.memory import local_memory
+from app.models.install_manager import ensure_default_models
+from app.models.model_registry import get_model_for_role
+from app.models.runtime_client import detect_ollama, infer_chat, list_ollama_models
+from app.supervisor.router import route
 from app.ui.model_status_panel import show_model_status
+
 
 class ModelService:
     @staticmethod
@@ -21,20 +20,19 @@ class ModelService:
 class MemoryService:
     @staticmethod
     def load(session_id="default"):
-        return load_memory(session_id=session_id)
+        return local_memory.load_memory(session_id=session_id)
 
     @staticmethod
     def append(role, content, model=None, session_id="default"):
-        append_message(role, content, model=model, session_id=session_id)
+        return local_memory.append_message(role, content, model=model, session_id=session_id)
 
     @staticmethod
     def list_sessions():
-        return list_sessions()
+        return local_memory.list_sessions()
 
     @staticmethod
     def create_session(session_id):
-        create_session(session_id)
-
+        return local_memory.create_session(session_id)
 
 
 class ChatService:
@@ -48,12 +46,14 @@ class ChatService:
 
     @staticmethod
     def infer(model, msg):
-        return run_model(model, msg)
+        return infer_chat(model, msg)
+
 
 class HardwareService:
     @staticmethod
     def summary():
         return hardware_summary()
+
 
 class StatusService:
     @staticmethod

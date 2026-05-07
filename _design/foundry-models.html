@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Foundry · Models</title>
+<style>
+  /* Foundry · Models view · 920 × 700 */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #0e0f11;
+    color: #D8D4CC;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 60px; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+  .modal {
+    width: 920px; height: 700px;
+    background: #1A1C1F;
+    border: 1px solid #3A3E44;
+    border-radius: 4px;
+    box-shadow: 0 30px 80px -10px rgba(0,0,0,0.6), 0 0 0 1px #0a0b0c inset;
+    display: grid;
+    grid-template-rows: 38px auto 1fr 56px;
+    overflow: hidden;
+    position: relative;
+  }
+  .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: #2F3338; }
+
+  /* Title bar */
+  .titlebar {
+    background: #16181B;
+    border-bottom: 1px solid #0A0B0C;
+    display: grid; grid-template-columns: auto 1fr auto;
+    align-items: center;
+    padding: 0 18px;
+  }
+  .brand {
+    font-weight: 600; font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: #D8D4CC;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .brand .led {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #F56600;
+    box-shadow: 0 0 6px #F56600;
+  }
+  .crumb {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: #6B6457; text-align: center;
+  }
+  .crumb .accent { color: #D8D4CC; }
+  .x {
+    font-family: monospace; color: #6B6457; font-size: 16px; cursor: pointer;
+    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 2px;
+  }
+  .x:hover { color: #B43A3A; border-color: #B43A3A; }
+
+  /* Hardware banner */
+  .banner {
+    background: #1F2226;
+    border-bottom: 1px solid #0A0B0C;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #A39E94;
+  }
+  .banner .seg {
+    padding: 0 16px; border-right: 1px solid #2F3338;
+    height: 14px; display: flex; align-items: center;
+  }
+  .banner .seg:first-child { padding-left: 0; }
+  .banner .seg:last-child { border-right: none; }
+  .banner .k { color: #6B6457; text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.16em; margin-right: 6px; }
+  .banner .v { color: #D8D4CC; }
+  .banner .v.ok { color: #93b88a; }
+  .banner .v.warn { color: #F56600; }
+
+  /* Body */
+  .body {
+    overflow-y: auto;
+    background: #16181B;
+    padding: 0;
+  }
+  .section-head {
+    background: #1F2226;
+    border-bottom: 1px solid #0A0B0C;
+    padding: 10px 24px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10pt; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6B6457; font-weight: 500;
+  }
+  .section-head .ttl { color: #D8D4CC; font-weight: 600; }
+  .section-head .meta {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    letter-spacing: 0.04em; text-transform: none; color: #6B6457;
+  }
+  .section-head .meta .num { color: #D8D4CC; }
+
+  /* Lane row */
+  .lane-table-head {
+    display: grid;
+    grid-template-columns: 4px 110px 220px 70px 110px 1fr 90px;
+    column-gap: 14px;
+    padding: 10px 24px 10px 4px;
+    border-bottom: 1px solid #0A0B0C;
+    background: #1A1C1F;
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: #6B6457; font-weight: 500;
+  }
+  .lane-row {
+    display: grid;
+    grid-template-columns: 4px 110px 220px 70px 110px 1fr 90px;
+    column-gap: 14px;
+    align-items: center;
+    padding: 14px 24px 14px 0;
+    border-bottom: 1px dotted #24272B;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #A39E94;
+  }
+  .lane-row .marker { width: 4px; height: 32px; background: transparent; }
+  .lane-row.installed .marker { background: #93b88a; }
+  .lane-row.missing .marker { background: #F56600; }
+  .lane-row.optional .marker { background: #3A3E44; }
+  .lane-row.blocked .marker { background: #B43A3A; }
+
+  .lane-row .role {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.14em;
+    color: #D8D4CC;
+  }
+  .lane-row .req {
+    font-family: 'Inter', sans-serif;
+    font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: #6B6457; margin-top: 2px;
+  }
+  .lane-row .model { color: #D8D4CC; }
+  .lane-row .size { color: #A39E94; text-align: right; padding-right: 6px; }
+  .lane-row .size .num { color: #D8D4CC; }
+  .lane-row .fit {
+    font-family: 'Inter', sans-serif;
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 2px 8px; border: 1px solid #3A3E44;
+    border-radius: 1px; display: inline-block;
+  }
+  .fit.safe   { color: #93b88a; border-color: rgba(147,184,138,0.4); }
+  .fit.tight  { color: #F56600; border-color: rgba(245,102,0,0.5); }
+  .fit.toobig { color: #B43A3A; border-color: rgba(180,58,58,0.5); }
+  .fit.unk    { color: #6B6457; }
+
+  .lane-row .status {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px; color: #A39E94;
+  }
+  .lane-row .status.ready    { color: #93b88a; }
+  .lane-row .status.missing  { color: #F56600; }
+  .lane-row .status.optional { color: #6B6457; }
+  .lane-row .status.blocked  { color: #B43A3A; }
+  .lane-row .status .meta {
+    color: #6B6457; font-size: 10px; font-family: 'JetBrains Mono', monospace; margin-top: 2px;
+  }
+
+  .lane-row .action {
+    text-align: right;
+  }
+  .pill {
+    height: 26px; padding: 0 12px;
+    background: transparent; color: #D8D4CC;
+    border: 1px solid #3A3E44;
+    border-radius: 2px;
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5pt; font-weight: 500;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    cursor: pointer; min-width: 80px;
+  }
+  .pill:hover { color: #F56600; border-color: #F56600; }
+  .pill.danger { color: #b09a9a; border-color: #4a3a3a; }
+  .pill.danger:hover { color: #B43A3A; border-color: #B43A3A; }
+  .pill.primary { background: #F56600; color: #1A1C1F; border: none; font-weight: 700; }
+
+  /* Other models block */
+  .extras {
+    padding: 14px 24px 24px;
+    background: #16181B;
+  }
+  .extras .row {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: #A39E94;
+    padding: 6px 0; border-bottom: 1px dotted #24272B;
+    display: grid; grid-template-columns: 1fr auto;
+  }
+  .extras .row .name { color: #D8D4CC; }
+  .extras .row .meta { color: #6B6457; font-size: 11px; }
+
+  /* Footer */
+  .footer {
+    background: #16181B;
+    border-top: 1px solid #0A0B0C;
+    padding: 0 18px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+  }
+  .footer .summary {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: #6B6457;
+    padding-left: 8px;
+  }
+  .footer .summary .ok { color: #93b88a; }
+  .footer .summary .warn { color: #F56600; }
+
+  .caption {
+    margin-top: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: #5a5750; text-align: center; width: 920px;
+  }
+  .caption strong { color: #D8D4CC; }
+  .caption .accent { color: #F56600; }
+</style>
+</head>
+<body>
+
+<div style="display: flex; flex-direction: column; align-items: center;">
+
+<div class="modal">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="brand">
+      <span class="led"></span>
+      Models
+    </div>
+    <div class="crumb">
+      <span>Local AI Control Layer</span> <span style="color:#4a4d52">·</span> <span class="accent">Registered Lanes</span>
+    </div>
+    <div class="x">×</div>
+  </div>
+
+  <!-- Hardware banner -->
+  <div class="banner">
+    <div class="seg"><span class="k">Ollama</span><span class="v ok">connected · 0.12.7</span></div>
+    <div class="seg"><span class="k">RAM</span><span class="v">31.9 GB</span></div>
+    <div class="seg"><span class="k">GPU</span><span class="v">RTX 3070 Ti · 4 GB VRAM</span></div>
+    <div class="seg"><span class="k">Lanes</span><span class="v"><span class="ok">2 ready</span> · <span class="warn">1 missing</span> · 1 optional</span></div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <div class="section-head">
+      <span class="ttl">Registered Lanes</span>
+      <span class="meta"><span class="num">4</span> total · <span class="num">2</span> installed · <span class="num">1.18</span>/<span class="num">2.51</span> GB downloading</span>
+    </div>
+
+    <!-- Header row -->
+    <div class="lane-table-head">
+      <div></div>
+      <div>Role</div>
+      <div>Model</div>
+      <div style="text-align:right; padding-right:6px;">Size</div>
+      <div>Fit</div>
+      <div>State</div>
+      <div style="text-align:right;">Action</div>
+    </div>
+
+    <!-- Reasoning · installed -->
+    <div class="lane-row installed">
+      <div class="marker"></div>
+      <div>
+        <div class="role">Reasoning</div>
+        <div class="req">required</div>
+      </div>
+      <div>
+        <div class="model">llama3.1:8b</div>
+      </div>
+      <div class="size"><span class="num">8.0</span> GB</div>
+      <div><span class="fit safe">safe</span></div>
+      <div>
+        <div class="status ready">Installed</div>
+        <div class="meta">in use · 412 ms last call</div>
+      </div>
+      <div class="action">
+        <button class="pill danger">Uninstall</button>
+      </div>
+    </div>
+
+    <!-- Coding · installed -->
+    <div class="lane-row installed">
+      <div class="marker"></div>
+      <div>
+        <div class="role">Coding</div>
+        <div class="req">required</div>
+      </div>
+      <div>
+        <div class="model">qwen2.5-coder:7b</div>
+      </div>
+      <div class="size"><span class="num">7.0</span> GB</div>
+      <div><span class="fit safe">safe</span></div>
+      <div>
+        <div class="status ready">Installed</div>
+        <div class="meta">idle</div>
+      </div>
+      <div class="action">
+        <button class="pill danger">Uninstall</button>
+      </div>
+    </div>
+
+    <!-- Vision · downloading -->
+    <div class="lane-row missing">
+      <div class="marker"></div>
+      <div>
+        <div class="role">Vision</div>
+        <div class="req">optional</div>
+      </div>
+      <div>
+        <div class="model">qwen3-vl</div>
+      </div>
+      <div class="size"><span class="num">9.0</span> GB</div>
+      <div><span class="fit safe">safe</span></div>
+      <div>
+        <div class="status missing">Downloading · 47%</div>
+        <div class="meta">1.18/2.51 GB · 0.9 MB/s · 02:14 left</div>
+      </div>
+      <div class="action">
+        <button class="pill">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Unfiltered · optional -->
+    <div class="lane-row optional">
+      <div class="marker"></div>
+      <div>
+        <div class="role">Unfiltered</div>
+        <div class="req">optional</div>
+      </div>
+      <div>
+        <div class="model">dolphin3:8b</div>
+      </div>
+      <div class="size"><span class="num">8.0</span> GB</div>
+      <div><span class="fit safe">safe</span></div>
+      <div>
+        <div class="status optional">Not installed</div>
+        <div class="meta">no safety filter — local use only</div>
+      </div>
+      <div class="action">
+        <button class="pill primary">Install</button>
+      </div>
+    </div>
+
+    <!-- Other unmanaged models -->
+    <div class="section-head">
+      <span class="ttl">Other Local Models</span>
+      <span class="meta">unmanaged · pulled outside the lane registry</span>
+    </div>
+
+    <div class="extras">
+      <div class="row">
+        <div class="name">phi3:mini</div>
+        <div class="meta">3.8 GB · last used 2026-04-28</div>
+      </div>
+      <div class="row">
+        <div class="name">nomic-embed-text:latest</div>
+        <div class="meta">274 MB · embedding model</div>
+      </div>
+      <div class="row">
+        <div class="name">mistral:7b-instruct</div>
+        <div class="meta">4.1 GB · pulled 2026-04-12</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <button class="pill">Refresh</button>
+    <div class="summary">
+      <span class="ok">2 lanes ready</span> · 1 downloading · 1 installable · 3 unmanaged · total local <span style="color:#D8D4CC">23.2 GB</span>
+    </div>
+    <button class="pill primary">Install Defaults</button>
+  </div>
+
+</div>
+
+<div class="caption">
+  <strong>Foundry · Models</strong> · 920 × 700 · marker bars: <span style="color:#93b88a">green</span> installed · <span class="accent">orange</span> active · <span style="color:#3A3E44">grey</span> optional · <span style="color:#B43A3A">red</span> blocked
+</div>
+
+</div>
+
+</body>
+</html>
