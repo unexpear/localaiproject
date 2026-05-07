@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Local AI Control Layer · 3 Design Directions</title>
+<style>
+  /* Junior pass — comparison sheet. Pick a direction; I'll then build the hi-fi mockup + QSS spec. */
+  :root {
+    --paper: #f4f1ea;
+    --ink: #14110f;
+    --rule: #d2cdbf;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--paper); color: var(--ink); }
+  body {
+    font-family: 'Newsreader', 'Source Serif 4', Georgia, serif;
+    font-size: 14px;
+    line-height: 1.55;
+    padding: 56px 64px 72px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+
+  /* ------- Header ------- */
+  .head { display: grid; grid-template-columns: 1fr auto; align-items: end; padding-bottom: 20px; border-bottom: 1px solid var(--ink); }
+  .eyebrow { font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: #6b6457; }
+  h1 { font-family: 'Newsreader', serif; font-weight: 400; font-size: 44px; letter-spacing: -0.01em; line-height: 1.05; margin-top: 8px; }
+  h1 em { font-style: italic; }
+  .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #6b6457; text-align: right; line-height: 1.7; }
+
+  /* ------- Columns ------- */
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; column-gap: 0; margin-top: 32px; }
+  .col { padding: 28px 28px 0; border-right: 1px solid var(--rule); }
+  .col:last-child { border-right: none; }
+
+  .index { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.18em; color: #6b6457; }
+  .name { font-family: 'Newsreader', serif; font-size: 28px; line-height: 1.1; margin-top: 6px; font-weight: 400; }
+  .anchor { font-family: 'Newsreader', serif; font-style: italic; font-size: 14px; color: #5a544a; margin-top: 6px; }
+
+  .feel { font-family: 'Newsreader', serif; font-size: 15px; font-style: italic; line-height: 1.5; margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--rule); }
+  .feel::before { content: '\201C'; font-size: 28px; line-height: 0; vertical-align: -8px; margin-right: 4px; color: #9a9285; }
+
+  /* ------- Palette ------- */
+  .swatches { margin-top: 22px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .swatch { aspect-ratio: 1; position: relative; }
+  .swatch span {
+    position: absolute; bottom: 6px; left: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.05em;
+    background: rgba(255,255,255,0.85); padding: 1px 4px; border-radius: 1px;
+  }
+  .swatch.dark span { background: rgba(0,0,0,0.55); color: #f6f3ec; }
+
+  /* ------- Type sample ------- */
+  .type-block { margin-top: 22px; }
+  .type-row { display: grid; grid-template-columns: 60px 1fr; column-gap: 10px; padding: 8px 0; border-bottom: 1px dotted var(--rule); }
+  .type-row:last-child { border-bottom: none; }
+  .type-tag { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: #6b6457; padding-top: 4px; }
+  .type-sample { font-size: 16px; line-height: 1.2; }
+
+  /* ------- Mini mockup container ------- */
+  .mini-wrap { margin-top: 24px; }
+  .mini-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: #6b6457; margin-bottom: 8px; }
+  .mini { width: 100%; aspect-ratio: 16/10; border: 1px solid var(--ink); position: relative; overflow: hidden; }
+
+  /* ============================================================
+     DIRECTION A · BRIDGE  (Pentagram / Vignelli — info architecture)
+     ============================================================ */
+  .a .name { font-family: 'Helvetica Neue', 'Arial', sans-serif; font-weight: 700; letter-spacing: -0.02em; }
+  .a .swatch.s1 { background: #f6f3ec; }
+  .a .swatch.s2 { background: #d9d2c1; }
+  .a .swatch.s3 { background: #14110f; }  .a .swatch.s3 { } /* dark */
+  .a .swatch.s4 { background: #6f1d1b; }  /* oxblood accent */
+  .a .swatch.s5 { background: #d97706; }  /* amber data */
+  .a .swatch.s3 span, .a .swatch.s4 span { background: rgba(0,0,0,0.55); color: #f6f3ec; }
+  .a .type-row.display .type-sample { font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; }
+  .a .type-row.mono .type-sample { font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace; font-size: 13px; }
+
+  .a .mini { background: #f6f3ec; }
+  .a .mini .row1 { position: absolute; top: 0; left: 0; right: 0; height: 18px; background: #14110f; color: #f6f3ec;
+    font-family: 'IBM Plex Mono', monospace; font-size: 7px; padding: 4px 8px; letter-spacing: 0.1em; display: flex; justify-content: space-between; }
+  .a .mini .col-l { position: absolute; top: 18px; bottom: 0; left: 0; right: 38%; padding: 8px; }
+  .a .mini .col-r { position: absolute; top: 18px; bottom: 0; right: 0; width: 38%; border-left: 1px solid #14110f; padding: 8px; background: #efeadd; }
+  .a .mini .ttl { font-family: 'Helvetica Neue', sans-serif; font-weight: 700; font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: #14110f; margin-bottom: 6px; }
+  .a .mini .line { font-family: 'IBM Plex Mono', monospace; font-size: 7px; color: #2a2520; line-height: 1.5; }
+  .a .mini .chip { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 6px; padding: 1px 4px; background: #6f1d1b; color: #f6f3ec; letter-spacing: 0.08em; margin-right: 4px; }
+  .a .mini .num { color: #d97706; }
+  .a .mini .barrow { display: grid; grid-template-columns: 60px 1fr 30px; gap: 4px; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 6px; }
+  .a .mini .input { position: absolute; bottom: 6px; left: 8px; right: 38%; height: 14px; border: 1px solid #14110f; padding: 3px 5px; font-family: 'IBM Plex Mono', monospace; font-size: 6px; color: #6b6457; }
+
+  /* ============================================================
+     DIRECTION B · ATELIER  (Kenya Hara — eastern minimalism)
+     ============================================================ */
+  .b .name { font-family: 'Newsreader', serif; font-weight: 300; letter-spacing: -0.005em; }
+  .b .swatch.s1 { background: #fbfaf6; }
+  .b .swatch.s2 { background: #ece6d6; }
+  .b .swatch.s3 { background: #1a1815; }  /* sumi */
+  .b .swatch.s4 { background: #b04a2f; }  /* terra */
+  .b .swatch.s5 { background: #6b6457; }
+  .b .swatch.s3 span, .b .swatch.s4 span { background: rgba(0,0,0,0.55); color: #f6f3ec; }
+  .b .type-row.display .type-sample { font-family: 'Newsreader', serif; font-style: italic; font-weight: 300; font-size: 18px; }
+  .b .type-row.mono .type-sample { font-family: 'JetBrains Mono', monospace; font-weight: 300; font-size: 13px; }
+
+  .b .mini { background: #fbfaf6; border: 1px solid #1a1815; }
+  .b .mini .row1 { position: absolute; top: 0; left: 0; right: 0; height: 22px;
+    font-family: 'JetBrains Mono', monospace; font-size: 7px; padding: 7px 14px; letter-spacing: 0.08em; color: #6b6457; display: flex; justify-content: space-between; }
+  .b .mini .divider { position: absolute; left: 14px; right: 14px; top: 26px; height: 1px; background: #d8d2c2; }
+  .b .mini .body { position: absolute; top: 36px; bottom: 32px; left: 14px; right: 14px; }
+  .b .mini .speaker { font-family: 'JetBrains Mono', monospace; font-size: 6px; color: #b04a2f; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 8px; }
+  .b .mini .said { font-family: 'Newsreader', serif; font-style: italic; font-size: 8px; line-height: 1.5; color: #1a1815; margin-top: 2px; max-width: 70%; }
+  .b .mini .input { position: absolute; bottom: 12px; left: 14px; right: 14px; height: 12px;
+    border-bottom: 1px solid #1a1815; font-family: 'JetBrains Mono', monospace; font-size: 6px; color: #6b6457; padding-bottom: 2px; }
+  .b .mini .input::after { content: '_'; color: #b04a2f; margin-left: 2px; }
+
+  /* ============================================================
+     DIRECTION C · FOUNDRY  (Dieter Rams / Braun — industrial modernism)
+     ============================================================ */
+  .c .name { font-family: 'Inter', 'Söhne', sans-serif; font-weight: 500; letter-spacing: -0.015em; }
+  .c .swatch.s1 { background: #1a1c1f; }  /* graphite dark */
+  .c .swatch.s2 { background: #24272b; }
+  .c .swatch.s3 { background: #2f3338; }
+  .c .swatch.s4 { background: #d8d4cc; }  /* bone */
+  .c .swatch.s5 { background: #f56600; }  /* signal orange */
+  .c .swatch.s1 span, .c .swatch.s2 span, .c .swatch.s3 span { background: rgba(0,0,0,0.6); color: #d8d4cc; }
+  .c .type-row.display .type-sample { font-family: 'Inter', sans-serif; font-weight: 500; }
+  .c .type-row.mono .type-sample { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+  .c .mini { background: #1a1c1f; border: 1px solid #0a0b0c; }
+  .c .mini .row1 { position: absolute; top: 0; left: 0; right: 0; height: 18px; background: #24272b;
+    border-bottom: 1px solid #0a0b0c;
+    font-family: 'JetBrains Mono', monospace; font-size: 7px; padding: 5px 10px; color: #a8a39a; display: flex; justify-content: space-between; align-items: center; }
+  .c .mini .row1 .led { width: 5px; height: 5px; border-radius: 50%; background: #f56600; box-shadow: 0 0 4px #f56600; display: inline-block; margin-right: 5px; vertical-align: -1px; }
+  .c .mini .col-l { position: absolute; top: 18px; bottom: 22px; left: 0; right: 36%; padding: 8px 10px; }
+  .c .mini .col-r { position: absolute; top: 18px; bottom: 22px; right: 0; width: 36%; border-left: 1px solid #0a0b0c; padding: 8px 10px; background: #1f2226; }
+  .c .mini .label { font-family: 'JetBrains Mono', monospace; font-size: 6px; letter-spacing: 0.16em; text-transform: uppercase; color: #6b6457; margin-bottom: 6px; }
+  .c .mini .line { font-family: 'JetBrains Mono', monospace; font-size: 7px; color: #d8d4cc; line-height: 1.5; }
+  .c .mini .chip { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 6px; padding: 1px 4px; background: transparent; color: #f56600; border: 1px solid #f56600; letter-spacing: 0.08em; margin-right: 4px; }
+  .c .mini .progress { position: absolute; bottom: 22px; left: 0; right: 0; height: 1px; background: #0a0b0c; }
+  .c .mini .progress::after { content: ''; position: absolute; top: 0; left: 0; height: 1px; width: 38%; background: #f56600; }
+  .c .mini .input-row { position: absolute; bottom: 0; left: 0; right: 0; height: 22px; background: #16181b; border-top: 1px solid #0a0b0c;
+    font-family: 'JetBrains Mono', monospace; font-size: 7px; padding: 6px 10px; color: #6b6457; }
+  .c .mini .input-row::before { content: '> '; color: #f56600; }
+
+  /* ------- Rationale ------- */
+  .rationale { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--rule); padding-bottom: 28px; }
+  .rationale h3 { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: #6b6457; margin-bottom: 8px; font-weight: 400; }
+  .rationale p { font-family: 'Newsreader', serif; font-size: 13px; line-height: 1.55; color: #2a2520; margin-bottom: 10px; }
+  .rationale .tradeoff { font-family: 'Newsreader', serif; font-style: italic; font-size: 12.5px; color: #5a544a; }
+  .rationale .tradeoff::before { content: 'Tradeoff. '; font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f1d1b; margin-right: 6px; }
+
+  /* ------- Footer note ------- */
+  .footer { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--ink); display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px; }
+  .footer p { font-family: 'Newsreader', serif; font-size: 13px; line-height: 1.55; color: #2a2520; max-width: 720px; }
+  .footer .legend { font-family: 'JetBrains Mono', monospace; font-size: 9px; letter-spacing: 0.16em; color: #6b6457; text-align: right; }
+  .footer .legend strong { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header class="head">
+  <div>
+    <div class="eyebrow">localaiproject · design directions · junior pass</div>
+    <h1>Three ways to <em>house</em> a local AI control layer.</h1>
+  </div>
+  <div class="meta">
+    Brief 2026·05·01<br>
+    PySide6 / Qt · 1440×920 · dark-by-default<br>
+    Pick one — I'll detail it next.
+  </div>
+</header>
+
+<section class="grid">
+
+  <!-- =================== DIRECTION A =================== -->
+  <div class="col a">
+    <div class="index">A · 01 / 03</div>
+    <div class="name">Bridge</div>
+    <div class="anchor">after Pentagram &amp; Massimo Vignelli — information architecture, the Bloomberg-terminal lineage.</div>
+
+    <p class="feel">A workbench densely instrumented for a power user who'd rather read four metrics than scroll one paragraph.</p>
+
+    <div class="swatches">
+      <div class="swatch s1"><span>#F6F3EC</span></div>
+      <div class="swatch s2"><span>#D9D2C1</span></div>
+      <div class="swatch s3 dark"><span>#14110F</span></div>
+      <div class="swatch s4 dark"><span>#6F1D1B</span></div>
+      <div class="swatch s5"><span>#D97706</span></div>
+    </div>
+
+    <div class="type-block">
+      <div class="type-row display">
+        <div class="type-tag">Display</div>
+        <div class="type-sample">Helvetica Now</div>
+      </div>
+      <div class="type-row mono">
+        <div class="type-tag">Mono</div>
+        <div class="type-sample">IBM Plex Mono · 13/16</div>
+      </div>
+    </div>
+
+    <div class="mini-wrap">
+      <div class="mini-label">Main window · sketch</div>
+      <div class="mini">
+        <div class="row1"><span>SESSION DEFAULT · LOCALAIPROJECT</span><span>OLLAMA ONLINE · 0.12.7</span></div>
+        <div class="col-l">
+          <div class="ttl">Transcript</div>
+          <div class="line"><span class="chip">REASON</span>route → llama3.1:8b</div>
+          <div class="line">why is the install button still spinning?</div>
+          <div class="line"><span class="chip">CTRL</span>execution exe_4f2c queued · waiting on ollama pull stream</div>
+          <div class="barrow">
+            <span>EXE_4F2C</span><span>READY · 412ms</span><span class="num">98%</span>
+          </div>
+          <div class="barrow">
+            <span>EXE_4F2D</span><span>NEEDS APPR.</span><span class="num">··</span>
+          </div>
+        </div>
+        <div class="col-r">
+          <div class="ttl">Lanes</div>
+          <div class="line">REASONING <span class="num">8 GB</span></div>
+          <div class="line">CODING <span class="num">7 GB</span></div>
+          <div class="line">VISION <span class="num">9 GB</span></div>
+          <div class="line">UNFILTERED <span class="num">8 GB</span></div>
+        </div>
+        <div class="input">&gt; explain workspace approval</div>
+      </div>
+    </div>
+
+    <div class="rationale">
+      <h3>Why for this app</h3>
+      <p>A control layer earns its name by being legible at a glance — every lane, every execution, every byte pulled. Bridge treats the screen as a printed broadsheet: rules between regions, monospaced counters for numbers, oxblood for things you should approve, amber for things downloading. No icons that don't carry data.</p>
+      <p class="tradeoff">High density rewards attention; can feel "clinical" if you wanted a Jarvis to chat with. Closest to a Bloomberg terminal among the three.</p>
+    </div>
+  </div>
+
+  <!-- =================== DIRECTION B =================== -->
+  <div class="col b">
+    <div class="index">B · 02 / 03</div>
+    <div class="name">Atelier</div>
+    <div class="anchor">after Kenya Hara &amp; Naoto Fukasawa — emptiness as content, the Muji-room lineage.</div>
+
+    <p class="feel">A thinking room rather than a console — most of the screen is breathing space, and what remains earned its place.</p>
+
+    <div class="swatches">
+      <div class="swatch s1"><span>#FBFAF6</span></div>
+      <div class="swatch s2"><span>#ECE6D6</span></div>
+      <div class="swatch s3 dark"><span>#1A1815</span></div>
+      <div class="swatch s4 dark"><span>#B04A2F</span></div>
+      <div class="swatch s5 dark"><span>#6B6457</span></div>
+    </div>
+
+    <div class="type-block">
+      <div class="type-row display">
+        <div class="type-tag">Display</div>
+        <div class="type-sample">Newsreader Italic</div>
+      </div>
+      <div class="type-row mono">
+        <div class="type-tag">Mono</div>
+        <div class="type-sample">JetBrains Mono Light</div>
+      </div>
+    </div>
+
+    <div class="mini-wrap">
+      <div class="mini-label">Main window · sketch</div>
+      <div class="mini">
+        <div class="row1"><span>session · default</span><span>ollama · connected</span></div>
+        <div class="divider"></div>
+        <div class="body">
+          <div class="speaker">You</div>
+          <div class="said">explain workspace approval — what does it actually gate?</div>
+          <div class="speaker" style="margin-top:14px;">Reason · llama3.1</div>
+          <div class="said">Read and search calls require an explicit approve before they run. The router queues the action; you decide when it executes.</div>
+        </div>
+        <div class="input">explain workspace approval</div>
+      </div>
+    </div>
+
+    <div class="rationale">
+      <h3>Why for this app</h3>
+      <p>The opposite premise to Bridge: instead of showing you everything, it shows you only the conversation, and the controls fade in only when you reach for them. Quiet color (paper white &amp; sumi ink) with a single terra accent for moments that actually matter — pending approvals, retries, errors.</p>
+      <p class="tradeoff">Calmest of the three, most "trustworthy"; needs more clicks to reach dense data (a Models view exists but it isn't the main act).</p>
+    </div>
+  </div>
+
+  <!-- =================== DIRECTION C =================== -->
+  <div class="col c">
+    <div class="index">C · 03 / 03</div>
+    <div class="name">Foundry</div>
+    <div class="anchor">after Dieter Rams &amp; the Braun studio — honest hardware, the workshop-tool lineage.</div>
+
+    <p class="feel">A piece of equipment, not a dashboard — graphite chassis, hairline seams, one signal-orange LED that means something.</p>
+
+    <div class="swatches">
+      <div class="swatch s1 dark"><span>#1A1C1F</span></div>
+      <div class="swatch s2 dark"><span>#24272B</span></div>
+      <div class="swatch s3 dark"><span>#2F3338</span></div>
+      <div class="swatch s4"><span>#D8D4CC</span></div>
+      <div class="swatch s5"><span>#F56600</span></div>
+    </div>
+
+    <div class="type-block">
+      <div class="type-row display">
+        <div class="type-tag">Display</div>
+        <div class="type-sample">Inter Medium</div>
+      </div>
+      <div class="type-row mono">
+        <div class="type-tag">Mono</div>
+        <div class="type-sample">JetBrains Mono · 13/16</div>
+      </div>
+    </div>
+
+    <div class="mini-wrap">
+      <div class="mini-label">Main window · sketch</div>
+      <div class="mini">
+        <div class="row1"><span><span class="led"></span>SESSION · DEFAULT &nbsp;|&nbsp; LOCALAIPROJECT</span><span>OLLAMA 0.12.7</span></div>
+        <div class="col-l">
+          <div class="label">Transcript</div>
+          <div class="line"><span class="chip">REASON</span>llama3.1:8b · 412ms</div>
+          <div class="line">workspace approval gates read &amp; search.</div>
+          <div class="line"><span class="chip">EXEC</span>exe_4f2c · ready</div>
+        </div>
+        <div class="col-r">
+          <div class="label">Executions</div>
+          <div class="line">exe_4f2c &nbsp;ready</div>
+          <div class="line">exe_4f2b &nbsp;needs appr.</div>
+          <div class="line">exe_4f2a &nbsp;done</div>
+        </div>
+        <div class="progress"></div>
+        <div class="input-row">explain workspace approval</div>
+      </div>
+    </div>
+
+    <div class="rationale">
+      <h3>Why for this app</h3>
+      <p>Where Bridge is editorial and Atelier is contemplative, Foundry is a tool you hold. Dark graphite chassis, panels separated by single-pixel seams, one orange LED in the status row that's actually wired to something (active install, pending approval). No filler chrome. The Cancel button looks like a real button on a Braun radio.</p>
+      <p class="tradeoff">Most "Jarvis-feeling" of the three; familiarity tradeoff — if you've seen any modern dev tool you've seen the silhouette. Wins on implementability in QSS.</p>
+    </div>
+  </div>
+
+</section>
+
+<footer class="footer">
+  <p>I'd lean <strong>C · Foundry</strong> as the safest implementable starting point — QSS handles the hairlines and the dark chassis perfectly, qt-material can host the LED accent, and it carries the "serious tool" personality you asked for. <strong>A · Bridge</strong> is the most distinctive, but it's the hardest to keep readable when the transcript fills with long messages. <strong>B · Atelier</strong> is gorgeous on the chat surface but will fight you when you go to the Models view — there's just a lot to show there.</p>
+  <p class="legend">Pick one →<br><strong>A</strong> · <strong>B</strong> · <strong>C</strong> · or <em>mix</em></p>
+</footer>
+
+</body>
+</html>

@@ -4,5 +4,8 @@ __pycache__/
 .venv/
 venv/
 
+# Claude-managed worktree state (per-worktree, not project history)
+.claude/
+
 app/memory/local_memory.json
 app/memory/local_memory.json.tmp

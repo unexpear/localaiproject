@@ -1,0 +1,28 @@
+# Scaffold a fresh Python lib via cowork — see `docs/design/workflow-templates.md`.
+#
+# Run with: `template run python-lib-skeleton package_name=mylib`
+#
+# Phase 1 only supports the `command` step kind, so the cowork plan is
+# expressed as a `cowork plan "..."` command. Phase 2 will add a
+# dedicated `cowork_plan` step kind.
+
+id = "python-lib-skeleton"
+description = "Plan a cowork run that scaffolds a fresh Python lib (package, README, pyproject, smoke test)"
+
+[[params]]
+name = "package_name"
+description = "snake_case package / import name"
+required = true
+
+[[params]]
+name = "author"
+description = "Author name for pyproject.toml"
+default = "{user.name}"
+
+[[steps]]
+kind = "command"
+cmd = """
+cowork plan "Scaffold a Python lib named {{package_name}} with author {{author}}: \
+create src/{{package_name}}/ package layout, draft README.md, write pyproject.toml, \
+add tests/test_smoke.py with one passing assertion, verify pytest passes"
+"""

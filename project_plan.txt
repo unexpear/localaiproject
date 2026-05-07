@@ -165,6 +165,59 @@
 9. Add model install/download logic
 10. Add optional vision/unfiltered lanes (lazy install)
 
-## 8. Drift Control Note
+## 8. Storage Layer Decision (2026-05-01)
+
+**Choice: DuckDB** (https://duckdb.org/) as the embedded persistence layer
+in place of JSON read-modify-write or SQLite.
+
+### Why not SQLite
+The user explicitly opted out of SQLite. The JSON-file storage that exists
+today has a documented concurrent-write risk (audit finding, prior round)
+because the chat handler and the install worker can both call into
+`local_memory` from different threads, and `load_memory` -> mutate ->
+`save_memory` does no locking.
+
+### Why DuckDB over the alternatives
+
+| Candidate | Verdict |
+|-----------|---------|
+| **DuckDB**            | MIT, embedded, ACID, modern, native Python API, single .duckdb file, supports SQL for future queries on executions/history. **Selected.** |
+| LMDB                  | Excellent OLTP key-value performance + ACID, but loses SQL queryability. Better suited if we needed pure KV. |
+| TinyDB + portalocker  | Minimal change but it's still JSON under the hood — the same fragility, just hidden. |
+| Postgres / Cockroach  | Server-based, overkill for a single-user local app. |
+| ZODB                  | Python object DB; viable but niche, smaller community. |
+
+### Migration approach (phased)
+
+Phase 1 (this round, low risk):
+  - Add `duckdb` to requirements.
+  - Build `app/memory/storage.py` -- abstract `MemoryStorage` interface.
+  - Extract current JSON behaviour into `app/memory/json_storage.py`.
+  - Implement `app/memory/duckdb_storage.py` with the same surface area.
+  - Tests at the storage-interface level: same test suite runs against
+    both backends.
+  - JSON remains the active backend on disk.
+
+Phase 2 (next round):
+  - Migration script: read `local_memory.json`, write to a fresh
+    `local_memory.duckdb`. Idempotent.
+  - Switch `local_memory` module to delegate to the DuckDB backend.
+  - Verify all callers still pass their tests.
+  - Keep the JSON file as a backup until the user is comfortable.
+
+Phase 3 (later):
+  - Add SQL-backed features that were impractical with JSON:
+    full-text search across executions, lane usage histograms, retention
+    pruning by age, a real audit log of approval decisions.
+
+### Constraints honoured
+- Free, MIT-licensed, no commercial strings.
+- Embedded -- no server process or external service.
+- Single-file persistence (the `.duckdb` file lives next to the JSON
+  store today and ships with the project).
+- Cross-platform (Windows / macOS / Linux).
+- Pure-Python install via pip, no native build steps required by the user.
+
+## 9. Drift Control Note
 
 This plan is saved as `project_plan.txt` in the project root. Future implementation should follow this file unless intentionally revised.

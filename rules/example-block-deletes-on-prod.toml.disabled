@@ -1,0 +1,15 @@
+# EXAMPLE rule — rename to `.toml` to activate.
+#
+# Refuses any `delete` command on a session tagged `production`. Tag a
+# session with `tags add production` to enable.
+
+id = "block-deletes-on-prod"
+description = "Production sessions cannot delete files"
+
+[when]
+action = "delete"
+session_tag = "production"
+
+[then.refuse]
+reason = "invalid_argument"
+output = "Production sessions can't delete files. Use a different session or remove the tag with `tags remove production`."
