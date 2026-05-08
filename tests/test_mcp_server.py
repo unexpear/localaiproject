@@ -483,5 +483,291 @@ class McpDispatcherCommandTests(unittest.TestCase):
         self.assertEqual(ev.get("reason"), "invalid_argument")
 
 
+class McpInstructionsToolsTests(unittest.TestCase):
+    """The instructions_* MCP tools (custom-instructions.md Phase 1+2+2.5+3a)
+    expose the dispatcher's instructions CRUD over JSON-RPC."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        _isolated_memory(self._tmp.name)
+
+    def tearDown(self):
+        local_memory._reset_storage_for_tests(None)
+        self._tmp.cleanup()
+
+    def test_instructions_tools_appear_in_tools_list(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        ])
+        names = {t["name"] for t in responses[0]["result"]["tools"]}
+        for expected in {
+            "instructions_list",
+            "instructions_add",
+            "instructions_show",
+            "instructions_enable",
+            "instructions_disable",
+            "instructions_hush",
+            "instructions_remove",
+            "instructions_clear",
+            "instructions_edit",
+            "instructions_import_persona",
+        }:
+            self.assertIn(expected, names)
+
+    def test_instructions_list_empty(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "instructions_list", "arguments": {}}},
+        ])
+        result = responses[0]["result"]
+        self.assertFalse(result.get("isError", False))
+        self.assertIn("No instructions", result["content"][0]["text"])
+
+    def test_instructions_add_minimal_then_list_shows_entry(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "constraint", "body": "Never edit migrations."},
+             }},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "instructions_list", "arguments": {}}},
+        ])
+        # Add succeeded
+        self.assertFalse(responses[0]["result"].get("isError", False))
+        added = responses[0]["result"]["structuredContent"]["result"]
+        self.assertEqual(added["kind"], "constraint")
+        self.assertEqual(added["body"], "Never edit migrations.")
+        self.assertTrue(added["id"].startswith("i_"))
+        # List shows it
+        list_text = responses[1]["result"]["content"][0]["text"]
+        self.assertIn("Never edit migrations.", list_text)
+
+    def test_instructions_add_with_applies_to_array(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {
+                     "kind": "style",
+                     "body": "Reply in plain prose.",
+                     "mode": "build",
+                     "tags": ["work", "urgent"],
+                     "lanes": ["code"],
+                 },
+             }},
+        ])
+        result = responses[0]["result"]
+        self.assertFalse(result.get("isError", False))
+        added = result["structuredContent"]["result"]
+        self.assertEqual(added["applies_to"]["mode"], "build")
+        self.assertEqual(added["applies_to"]["tags"], ["work", "urgent"])
+        self.assertEqual(added["applies_to"]["lanes"], ["code"])
+
+    def test_instructions_add_missing_kind_returns_invalid_argument(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"body": "x."},
+             }},
+        ])
+        result = responses[0]["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(
+            result["structuredContent"]["reason"], "invalid_argument",
+        )
+
+    def test_instructions_add_missing_body_returns_invalid_argument(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style"},
+             }},
+        ])
+        result = responses[0]["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(
+            result["structuredContent"]["reason"], "invalid_argument",
+        )
+
+    def test_instructions_show_round_trip(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "knowledge", "body": "Project uses Postgres."},
+             }},
+        ])
+        added_id = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "instructions_show", "arguments": {"id": added_id}}},
+        ])
+        text = responses[0]["result"]["content"][0]["text"]
+        self.assertIn(added_id, text)
+        self.assertIn("Postgres", text)
+
+    def test_instructions_show_unknown_id_returns_unknown_target(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "instructions_show", "arguments": {"id": "nope"}}},
+        ])
+        result = responses[0]["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(
+            result["structuredContent"]["reason"], "unknown_target",
+        )
+
+    def test_instructions_disable_then_enable_round_trip(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "x."},
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "instructions_disable", "arguments": {"id": iid}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "instructions_enable", "arguments": {"id": iid}}},
+        ])
+        # Disable succeeded
+        d = responses[0]["result"]["structuredContent"]["result"]
+        self.assertFalse(d["enabled"])
+        # Enable succeeded
+        e = responses[1]["result"]["structuredContent"]["result"]
+        self.assertTrue(e["enabled"])
+
+    def test_instructions_hush_with_turns(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "x."},
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_hush",
+                 "arguments": {"id": iid, "turns": 5},
+             }},
+        ])
+        result = responses[0]["result"]["structuredContent"]["result"]
+        self.assertEqual(result["hushed_remaining"], 5)
+
+    def test_instructions_edit_body(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "Original."},
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_edit",
+                 "arguments": {"id": iid, "body": "Updated body content"},
+             }},
+        ])
+        result = responses[0]["result"]["structuredContent"]["result"]
+        self.assertEqual(result["body"], "Updated body content")
+        # ID preserved.
+        self.assertEqual(result["id"], iid)
+
+    def test_instructions_edit_clear_mode_drops_only_that_key(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {
+                     "kind": "style", "body": "x.",
+                     "mode": "build", "tags": ["work"],
+                 },
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_edit",
+                 "arguments": {"id": iid, "clear_mode": True},
+             }},
+        ])
+        result = responses[0]["result"]["structuredContent"]["result"]
+        self.assertNotIn("mode", result["applies_to"])
+        # Tags preserved.
+        self.assertEqual(result["applies_to"].get("tags"), ["work"])
+
+    def test_instructions_edit_no_changes_returns_invalid_argument(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "x."},
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_edit",
+                 "arguments": {"id": iid},
+             }},
+        ])
+        result = responses[0]["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual(
+            result["structuredContent"]["reason"], "invalid_argument",
+        )
+
+    def test_instructions_remove_drops_entry(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "x."},
+             }},
+        ])
+        iid = responses[0]["result"]["structuredContent"]["result"]["id"]
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "instructions_remove", "arguments": {"id": iid}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "instructions_list", "arguments": {}}},
+        ])
+        # Remove succeeded
+        self.assertFalse(responses[0]["result"].get("isError", False))
+        # List now empty
+        self.assertIn(
+            "No instructions", responses[1]["result"]["content"][0]["text"],
+        )
+
+    def test_instructions_clear_drops_everything(self):
+        responses = _drive([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "A."},
+             }},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {
+                 "name": "instructions_add",
+                 "arguments": {"kind": "style", "body": "B."},
+             }},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "instructions_clear", "arguments": {}}},
+        ])
+        result = responses[2]["result"]["structuredContent"]["result"]
+        self.assertEqual(result["removed"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

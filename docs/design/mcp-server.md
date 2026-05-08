@@ -1,19 +1,25 @@
 # Design: MCP Server Wrapper
 
-**Status: Phase 1 shipped · 2026-05-04**
+**Status: Phase 1 shipped · 2026-05-08**
 
 Phase 1 — stdio transport, JSON-RPC 2.0 framing, initialize/ping/
 shutdown handshake, tools/list, tools/call, resources/list,
-resources/read with `sessions://list`, **23 tools** covering inspect
+resources/read with `sessions://list`, **40+ tools** covering inspect
 (`status`, `models`, `doctor`, `executions`, `tasks`, `link_status`,
-`get_session_state`) and action (`chat`, `dispatch`, `do`, `iterate`,
-`inbox_next`, `link`, `set_workspace`, `set_mode`, `approve`, `deny`,
-`read_file`, `search_workspace`, `notes_show`, `notes_append`,
-`cowork_plan`, `cowork_run`) — is shipped and tested
-(`tests/test_mcp_server.py`, 32 tests). Phase 2 (HTTP transport,
-streaming progress notifications, all remaining tools, full resource
-catalog) and Phase 3 (gateway-internal SSE + bus subscriptions)
-remain planned.
+`get_session_state`, `get_prompt_assembly`), action (`chat`,
+`dispatch`, `do`, `iterate`, `inbox_next`, `link`, `set_workspace`,
+`set_mode`, `approve`, `deny`, `read_file`, `search_workspace`,
+`notes_show`, `notes_append`, `cowork_plan`, `cowork_run`,
+`recall`), browser (`browser_open`, `browser_navigate`,
+`browser_screenshot`, `browser_get_text`, `browser_get_html`,
+`browser_close`), and custom-instructions
+(`instructions_list`, `instructions_add`, `instructions_show`,
+`instructions_enable`, `instructions_disable`, `instructions_hush`,
+`instructions_remove`, `instructions_clear`, `instructions_edit`,
+`instructions_import_persona`) — is shipped and tested
+(`tests/test_mcp_server.py`, 51 tests). Phase 2 (HTTP transport,
+streaming progress notifications, full resource catalog) and Phase
+3 (gateway-internal SSE + bus subscriptions) remain planned.
 
 Run as a subprocess: ``python -m app.mcp``. Inspect from inside the
 dispatcher: ``mcp tools`` / ``mcp config``.

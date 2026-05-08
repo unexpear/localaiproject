@@ -370,6 +370,201 @@ def _notes_append_handler(args):
     return _dispatch_input()(f"notes append {text}", session_id=sid)
 
 
+# --- Custom instructions (custom-instructions.md Phase 1+2+2.5+3a) --
+#
+# Each handler dispatches into the corresponding ``instructions ...``
+# subcommand. The dispatcher already enforces validation, so the MCP
+# wrapper just shapes args into the dispatcher's positional + flag
+# string format.
+
+def _instructions_list_handler(args):
+    sid = _session_arg(args)
+    return _dispatch_input()("instructions list", session_id=sid)
+
+
+def _build_applies_to_flags(args):
+    """Translate MCP-shaped applies_to into dispatcher-flag form.
+    Returns a list of additional argv tokens (already escaped).
+    Empty list when no applies_to fields supplied.
+    """
+    parts = []
+    mode = args.get("mode")
+    if isinstance(mode, str) and mode:
+        parts.extend(["--mode", mode])
+    workspace = args.get("workspace")
+    if isinstance(workspace, str) and workspace:
+        parts.extend(["--workspace", workspace])
+    tags = args.get("tags")
+    if isinstance(tags, list) and tags:
+        parts.extend(["--tags", ",".join(str(t) for t in tags)])
+    elif isinstance(tags, str) and tags:
+        parts.extend(["--tags", tags])
+    lanes = args.get("lanes")
+    if isinstance(lanes, list) and lanes:
+        parts.extend(["--lanes", ",".join(str(l) for l in lanes)])
+    elif isinstance(lanes, str) and lanes:
+        parts.extend(["--lanes", lanes])
+    return parts
+
+
+def _instructions_add_handler(args):
+    sid = _session_arg(args)
+    kind = args.get("kind")
+    body = args.get("body")
+    if not isinstance(kind, str) or not kind.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "kind is required (constraint|style|persona|knowledge|override)",
+            "reason": "invalid_argument",
+        }
+    if not isinstance(body, str) or not body.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "body is required",
+            "reason": "invalid_argument",
+        }
+    parts = ["instructions", "add", kind.strip().lower()]
+    label = args.get("label")
+    if isinstance(label, str) and label.strip():
+        parts.extend(["--label", label.strip().lower()])
+    explicit_id = args.get("id")
+    if isinstance(explicit_id, str) and explicit_id.strip():
+        parts.extend(["--id", explicit_id.strip().lower()])
+    priority = args.get("priority")
+    if isinstance(priority, int):
+        parts.extend(["--priority", str(priority)])
+    char_limit = args.get("char_limit")
+    if isinstance(char_limit, int):
+        parts.extend(["--char-limit", str(char_limit)])
+    parts.extend(_build_applies_to_flags(args))
+    parts.append(body.strip())
+    return _dispatch_input()(" ".join(parts), session_id=sid)
+
+
+def _instructions_show_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    return _dispatch_input()(f"instructions show {iid.strip()}", session_id=sid)
+
+
+def _instructions_enable_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    return _dispatch_input()(f"instructions enable {iid.strip()}", session_id=sid)
+
+
+def _instructions_disable_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    return _dispatch_input()(f"instructions disable {iid.strip()}", session_id=sid)
+
+
+def _instructions_hush_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    parts = ["instructions", "hush", iid.strip()]
+    turns = args.get("turns")
+    if isinstance(turns, int):
+        parts.extend(["--turns", str(turns)])
+    return _dispatch_input()(" ".join(parts), session_id=sid)
+
+
+def _instructions_remove_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    return _dispatch_input()(f"instructions remove {iid.strip()}", session_id=sid)
+
+
+def _instructions_clear_handler(args):
+    sid = _session_arg(args)
+    return _dispatch_input()("instructions clear", session_id=sid)
+
+
+def _instructions_edit_handler(args):
+    sid = _session_arg(args)
+    iid = args.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "id is required",
+            "reason": "invalid_argument",
+        }
+    parts = ["instructions", "edit", iid.strip()]
+    body = args.get("body")
+    if isinstance(body, str) and body.strip():
+        # --body consumes everything to the next flag — emit it last
+        # to avoid the dispatcher's parser swallowing subsequent flags
+        # into the body.
+        body_tokens = ["--body", body.strip()]
+    else:
+        body_tokens = []
+    label = args.get("label")
+    if isinstance(label, str) and label.strip():
+        parts.extend(["--label", label.strip().lower()])
+    kind = args.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        parts.extend(["--kind", kind.strip().lower()])
+    priority = args.get("priority")
+    if isinstance(priority, int):
+        parts.extend(["--priority", str(priority)])
+    char_limit = args.get("char_limit")
+    if isinstance(char_limit, int):
+        parts.extend(["--char-limit", str(char_limit)])
+    parts.extend(_build_applies_to_flags(args))
+    # Booleans for clearing applies_to keys.
+    if args.get("clear_mode") is True:
+        parts.append("--no-mode")
+    if args.get("clear_workspace") is True:
+        parts.append("--no-workspace")
+    if args.get("clear_tags") is True:
+        parts.append("--no-tags")
+    if args.get("clear_lanes") is True:
+        parts.append("--no-lanes")
+    parts.extend(body_tokens)
+    if len(parts) == 3:
+        return {
+            "action": "instructions", "session_id": sid,
+            "output": "no changes specified",
+            "reason": "invalid_argument",
+        }
+    return _dispatch_input()(" ".join(parts), session_id=sid)
+
+
+def _instructions_import_persona_handler(args):
+    sid = _session_arg(args)
+    return _dispatch_input()("instructions import-persona", session_id=sid)
+
+
 def _cowork_plan_handler(args):
     sid = _session_arg(args)
     goal = args.get("goal") or ""
@@ -821,6 +1016,181 @@ TOOLS: List[Tool] = [
             "required": ["run_id"],
         },
         handler=_cowork_run_handler,
+    ),
+    # -- Custom instructions (custom-instructions.md Phase 1+2+2.5+3a) --
+    Tool(
+        name="instructions_list",
+        description=(
+            "List the session's typed/conditional behavioural rules. "
+            "Each entry has id, kind, label, enabled, applies_to "
+            "(mode/workspace/tags/lanes), priority, hushed_remaining."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+            },
+        },
+        handler=_instructions_list_handler,
+    ),
+    Tool(
+        name="instructions_add",
+        description=(
+            "Add a new custom instruction. Required: kind "
+            "(constraint|style|persona|knowledge|override), body. "
+            "Optional applies_to keys (mode, workspace, tags, lanes) "
+            "filter when the rule fires."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["constraint", "style", "persona", "knowledge", "override"],
+                },
+                "body": {"type": "string", "description": "Rule text the model will see."},
+                "label": {"type": "string", "description": "Optional display label."},
+                "id": {"type": "string", "description": "Optional explicit id (else auto)."},
+                "mode": {"type": "string", "enum": ["plan", "build"]},
+                "workspace": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "lanes": {"type": "array", "items": {"type": "string"}},
+                "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+                "char_limit": {"type": "integer"},
+            },
+            "required": ["kind", "body"],
+        },
+        handler=_instructions_add_handler,
+    ),
+    Tool(
+        name="instructions_show",
+        description="Show one instruction's full body, condition, and budgets.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_show_handler,
+    ),
+    Tool(
+        name="instructions_enable",
+        description="Re-arm a disabled instruction.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_enable_handler,
+    ),
+    Tool(
+        name="instructions_disable",
+        description="Mute an instruction without losing its body.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_disable_handler,
+    ),
+    Tool(
+        name="instructions_hush",
+        description=(
+            "Temporarily mute an instruction for N effective chat turns. "
+            "Default 1; turns=0 clears any active hush."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+                "turns": {"type": "integer", "minimum": 0, "default": 1},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_hush_handler,
+    ),
+    Tool(
+        name="instructions_remove",
+        description="Drop an instruction entirely.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_remove_handler,
+    ),
+    Tool(
+        name="instructions_clear",
+        description="Drop every instruction. Returns the count removed.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+            },
+        },
+        handler=_instructions_clear_handler,
+    ),
+    Tool(
+        name="instructions_edit",
+        description=(
+            "Edit an existing instruction in place. Preserves the id; only "
+            "fields you supply change. applies_to keys deep-merge against "
+            "the existing entry. Use clear_mode/clear_workspace/clear_tags/"
+            "clear_lanes booleans to drop a single applies_to key."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+                "id": {"type": "string"},
+                "body": {"type": "string"},
+                "label": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["constraint", "style", "persona", "knowledge", "override"],
+                },
+                "mode": {"type": "string", "enum": ["plan", "build"]},
+                "workspace": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "lanes": {"type": "array", "items": {"type": "string"}},
+                "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+                "char_limit": {"type": "integer"},
+                "clear_mode": {"type": "boolean"},
+                "clear_workspace": {"type": "boolean"},
+                "clear_tags": {"type": "boolean"},
+                "clear_lanes": {"type": "boolean"},
+            },
+            "required": ["id"],
+        },
+        handler=_instructions_edit_handler,
+    ),
+    Tool(
+        name="instructions_import_persona",
+        description=(
+            "Bulk-create one instruction per heading in the workspace's "
+            "PERSONA.md. Heading text becomes the label; a heuristic maps "
+            "the heading to one of the five kinds."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "default": "default"},
+            },
+        },
+        handler=_instructions_import_persona_handler,
     ),
     # -- Browser (Phase 1: read-only Playwright skill) --
     Tool(
