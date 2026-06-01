@@ -10,7 +10,11 @@ target one localaiproject session.
   the user's hardware via Ollama.
 - **Lane-based routing.** A small router picks one of four lanes
   (reasoning / coding / vision / unfiltered), the registry resolves the
-  lane to a model, the runtime client streams the chat.
+  lane to a model, the runtime client streams the chat. The registry
+  also classifies hardware fit per lane: a RAM tier (safe / tight /
+  too_big) plus a GPU **placement** hint (gpu / partial_offload / cpu)
+  derived from detected VRAM, so the doctor/models views can warn
+  "fits VRAM, fast" vs "CPU offload, slower" rather than RAM-only.
 - **Approval-gated workspace access.** Any read or search inside the
   pinned workspace is queued as a pending action and requires explicit
   `approve` (CLI) or click (GUI) before running. The router never

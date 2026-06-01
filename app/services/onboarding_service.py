@@ -14,6 +14,15 @@ FIT_LABELS = {
     "unknown": "fit unknown",
 }
 
+#: Human labels for the GPU-vs-CPU placement hint (model_registry
+#: Phase: hardware-aware fit). Only surfaced when it adds signal —
+#: ``cpu`` and ``unknown`` are the silent default (no GPU info), so we
+#: don't clutter the report with "runs on CPU" for every lane.
+PLACEMENT_LABELS = {
+    "gpu": "GPU-accelerated (fits VRAM)",
+    "partial_offload": "partial GPU offload (slower — exceeds VRAM)",
+}
+
 
 def _format_ram(ram_bytes):
     if not ram_bytes:
@@ -46,11 +55,13 @@ def _version_meets_requirement(current_version, required_version):
     return current >= required
 
 
-def _lane_rows(status, ram_bytes=None):
+def _lane_rows(status, ram_bytes=None, vram_bytes=None):
     installed_models = {entry["model"] for entry in status.get("installed", [])}
     current_version = status.get("version")
     rows = []
-    fit_by_role = model_registry.get_hardware_lane_fit(ram_bytes=ram_bytes)
+    fit_by_role = model_registry.get_hardware_lane_fit(
+        ram_bytes=ram_bytes, vram_bytes=vram_bytes,
+    )
 
     for role, info in model_registry.MODEL_REGISTRY.items():
         state = "ready" if info["model"] in installed_models else "missing required" if info["required"] else "optional, not installed"
@@ -61,6 +72,12 @@ def _lane_rows(status, ram_bytes=None):
         fit = fit_by_role.get(role, {})
         if fit.get("tier") in {"tight", "too_big"}:
             details.append(FIT_LABELS[fit["tier"]])
+        # Surface GPU placement only when it adds signal (a positive
+        # GPU fit or a slow partial-offload warning). cpu/unknown stay
+        # silent — they're the no-GPU-info default.
+        placement_label = PLACEMENT_LABELS.get(fit.get("placement"))
+        if placement_label:
+            details.append(placement_label)
         rows.append(
             {
                 "role": role,
@@ -122,7 +139,11 @@ def get_doctor_snapshot(session_id="default"):
     return {
         "session_id": session_id,
         "status": status,
-        "lanes": _lane_rows(status, ram_bytes=hardware.get("ram")),
+        "lanes": _lane_rows(
+            status,
+            ram_bytes=hardware.get("ram"),
+            vram_bytes=hardware.get("vram"),
+        ),
         "context": context,
         "summary": summary,
         "summary_counts": _summary_counts(summary),
@@ -150,6 +171,7 @@ def format_doctor_report(session_id="default"):
         "Hardware",
         f"- RAM: {_format_ram(hardware.get('ram'))}",
         f"- GPU: {hardware.get('gpu') or 'not detected'}",
+        f"- VRAM: {_format_ram(hardware.get('vram')) if hardware.get('vram') else 'n/a (CPU or non-NVIDIA)'}",
         "",
         "Lanes",
     ]

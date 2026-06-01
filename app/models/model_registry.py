@@ -151,26 +151,78 @@ def is_model_too_big(model_name):
     return classify_hardware_fit(model_name).get("tier") == "too_big"
 
 
-def classify_hardware_fit(model_name, ram_bytes=None):
-    """Classify how well a model fits local RAM.
+#: Fraction of VRAM the model weights may occupy and still count as a
+#: comfortable full-GPU fit. Leaves ~15% for KV cache + activations at
+#: modest context lengths. Above this, Ollama spills layers to CPU
+#: (partial offload) — it still runs, just slower. (Adapted concept:
+#: hardware-aware fit scoring, as seen in AlexsJones/llmfit and
+#: PewDiePie's Odysseus. We deliberately keep ONLY the VRAM-vs-RAM
+#: placement axis — Ollama owns quantisation + layer offload, so the
+#: full quant/bandwidth scoring those tools do doesn't apply here.)
+VRAM_FIT_CEILING = 0.85
 
-    Tiers:
+
+def _classify_placement(size_bytes, vram_bytes, tier):
+    """Return ``(placement, vram_ratio)`` — the GPU-vs-CPU dimension a
+    RAM-only check misses. ``vram_ratio`` is None when VRAM is unknown.
+
+    Placement values:
+      gpu             -> fits in detected VRAM (fully offloaded, fast)
+      partial_offload -> exceeds VRAM but fits RAM (some layers on CPU)
+      cpu             -> no GPU VRAM detected; runs on CPU/RAM
+      too_big         -> exceeds RAM (won't run well anywhere)
+    """
+    if tier == "too_big":
+        return "too_big", (size_bytes / vram_bytes if vram_bytes else None)
+    if vram_bytes and vram_bytes > 0:
+        vram_ratio = size_bytes / vram_bytes
+        if vram_ratio <= VRAM_FIT_CEILING:
+            return "gpu", vram_ratio
+        return "partial_offload", vram_ratio
+    # No VRAM detected — assume CPU/RAM execution (prior behaviour).
+    return "cpu", None
+
+
+def classify_hardware_fit(model_name, ram_bytes=None, vram_bytes=None):
+    """Classify how well a model fits local hardware.
+
+    RAM tiers (unchanged — ``is_model_too_big`` + callers depend on these):
       safe    -> model ≤ 40% of RAM (comfortable headroom for KV cache and OS)
       tight   -> 40%–80% of RAM (will run but leaves little slack)
       too_big -> > 80% of RAM
       unknown -> RAM not detectable or model not registered
+
+    Plus a ``placement`` hint distinguishing fast GPU inference from
+    slow CPU offload — the dimension a RAM-only check misses (see
+    ``_classify_placement``). ``vram_bytes`` is auto-probed from the
+    hardware summary ONLY on the live path (when ``ram_bytes`` is also
+    None); callers that inject ``ram_bytes`` (e.g. tests) stay hermetic
+    and get ``placement="cpu"`` unless they inject ``vram_bytes`` too.
     """
     info = get_model_info_by_name(model_name)
     if not info:
-        return {"tier": "unknown", "size_gb": None, "ram_bytes": ram_bytes, "reason": "unregistered model"}
+        return {
+            "tier": "unknown", "placement": "unknown", "size_gb": None,
+            "ram_bytes": ram_bytes, "vram_bytes": vram_bytes,
+            "reason": "unregistered model",
+        }
 
     size_gb = info["size_gb"]
     size_bytes = size_gb * (1024 ** 3)
 
     if ram_bytes is None:
-        ram_bytes = hardware_summary().get("ram")
+        summary = hardware_summary()
+        ram_bytes = summary.get("ram")
+        # Single probe on the live path: pick up VRAM from the same
+        # summary so we don't fire a second nvidia-smi subprocess.
+        if vram_bytes is None:
+            vram_bytes = summary.get("vram")
     if not ram_bytes:
-        return {"tier": "unknown", "size_gb": size_gb, "ram_bytes": None, "reason": "RAM not detected"}
+        return {
+            "tier": "unknown", "placement": "unknown", "size_gb": size_gb,
+            "ram_bytes": None, "vram_bytes": vram_bytes,
+            "reason": "RAM not detected",
+        }
 
     ratio = size_bytes / ram_bytes
     if ratio > 0.8:
@@ -180,19 +232,31 @@ def classify_hardware_fit(model_name, ram_bytes=None):
     else:
         tier = "safe"
 
-    return {
+    placement, vram_ratio = _classify_placement(size_bytes, vram_bytes, tier)
+
+    result = {
         "tier": tier,
+        "placement": placement,
         "size_gb": size_gb,
         "ram_bytes": ram_bytes,
+        "vram_bytes": vram_bytes,
         "ratio": ratio,
     }
+    if vram_ratio is not None:
+        result["vram_ratio"] = vram_ratio
+    return result
 
 
-def get_hardware_lane_fit(ram_bytes=None):
+def get_hardware_lane_fit(ram_bytes=None, vram_bytes=None):
     """Return {role: classify_hardware_fit(...)} for every registered lane."""
     if ram_bytes is None:
-        ram_bytes = hardware_summary().get("ram")
+        summary = hardware_summary()
+        ram_bytes = summary.get("ram")
+        if vram_bytes is None:
+            vram_bytes = summary.get("vram")
     return {
-        role: classify_hardware_fit(info["model"], ram_bytes=ram_bytes)
+        role: classify_hardware_fit(
+            info["model"], ram_bytes=ram_bytes, vram_bytes=vram_bytes,
+        )
         for role, info in MODEL_REGISTRY.items()
     }

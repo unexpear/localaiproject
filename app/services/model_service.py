@@ -121,8 +121,11 @@ _FIT_LABELS = {
 def format_models_overview():
     """One-stop view: lanes + state + fit vs local RAM + extras."""
     status = get_status()
-    ram_bytes = hardware_summary().get("ram")
-    fits = model_registry.get_hardware_lane_fit(ram_bytes=ram_bytes)
+    _hw = hardware_summary()
+    ram_bytes = _hw.get("ram")
+    fits = model_registry.get_hardware_lane_fit(
+        ram_bytes=ram_bytes, vram_bytes=_hw.get("vram"),
+    )
     ram_label = f"{ram_bytes / (1024 ** 3):.1f} GB" if ram_bytes else "unknown"
     lines = [
         "Registered Lanes",

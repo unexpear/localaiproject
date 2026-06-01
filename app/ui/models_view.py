@@ -149,7 +149,9 @@ class ModelsView(QDialog):
         status = get_status()
         hardware = hardware_summary()
         ram_bytes = hardware.get("ram")
-        fits = model_registry.get_hardware_lane_fit(ram_bytes=ram_bytes)
+        fits = model_registry.get_hardware_lane_fit(
+            ram_bytes=ram_bytes, vram_bytes=hardware.get("vram"),
+        )
         installed = {entry["model"] for entry in status.get("installed", [])}
 
         # Banner
